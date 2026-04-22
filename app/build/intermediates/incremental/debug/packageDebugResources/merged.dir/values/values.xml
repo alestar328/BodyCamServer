@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_description">FalconOne captura los botones físicos de la cámara para iniciar/detener grabación sin tocar la pantalla.</string>
+</resources>

@@ -1,0 +1,2 @@
+com.falconone.bodycamserver:xml/accessibility_service_config = 0x7f020000
+com.falconone.bodycamserver:string/accessibility_description = 0x7f010000

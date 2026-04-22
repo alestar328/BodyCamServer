@@ -1,0 +1,160 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.falconone.bodycamserver"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="26"
+9        android:targetSdkVersion="28" />
+10
+11    <!-- Bluetooth -->
+12    <uses-permission android:name="android.permission.BLUETOOTH" />
+12-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:5:5-68
+12-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:5:22-65
+13    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+13-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:6:5-74
+13-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:6:22-71
+14
+15    <!-- Camera & audio -->
+16    <uses-permission android:name="android.permission.CAMERA" />
+16-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:9:5-65
+16-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:9:22-62
+17    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+17-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:10:5-71
+17-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:10:22-68
+18    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+18-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:11:5-81
+18-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:11:22-78
+19    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+19-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:12:5-80
+19-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:12:22-77
+20
+21    <!-- Service persistence -->
+22    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+22-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:15:5-77
+22-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:15:22-74
+23    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+23-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:16:5-81
+23-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:16:22-78
+24    <uses-permission android:name="android.permission.WAKE_LOCK" />
+24-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:17:5-68
+24-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:17:22-65
+25
+26    <!-- Upload & connectivity check -->
+27    <uses-permission android:name="android.permission.INTERNET" />
+27-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:20:5-67
+27-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:20:22-64
+28    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+28-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:21:5-79
+28-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:21:22-76
+29
+30    <!-- Hardware control (sysfs nodes) -->
+31    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+31-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:24:5-76
+31-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:24:22-73
+32    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+32-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:25:5-76
+32-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:25:22-73
+33
+34    <application
+34-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:27:5-83:19
+35        android:allowBackup="false"
+35-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:29:9-36
+36        android:debuggable="true"
+37        android:extractNativeLibs="false"
+38        android:icon="@android:drawable/ic_menu_camera"
+38-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:30:9-56
+39        android:label="FalconOne Server" >
+39-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:28:9-41
+40        <activity
+40-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:32:9-39:20
+41            android:name="com.falconone.bodycamserver.MainActivity"
+41-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:33:13-41
+42            android:exported="true" >
+42-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:34:13-36
+43            <intent-filter>
+43-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:35:13-38:29
+44                <action android:name="android.intent.action.MAIN" />
+44-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:36:17-69
+44-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:36:25-66
+45
+46                <category android:name="android.intent.category.LAUNCHER" />
+46-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:37:17-77
+46-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:37:27-74
+47            </intent-filter>
+48        </activity>
+49
+50        <!-- Activity de grabación — foreground para máxima prioridad en HAL de cámara -->
+51        <activity
+51-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:42:9-47:40
+52            android:name="com.falconone.bodycamserver.RecordingActivity"
+52-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:43:13-46
+53            android:exported="false"
+53-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:47:13-37
+54            android:launchMode="singleTask"
+54-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:46:13-44
+55            android:screenOrientation="landscape"
+55-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:45:13-50
+56            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+56-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:44:13-77
+57
+58        <!-- Servidor BT — persiste en background -->
+59        <!-- foregroundServiceType no disponible en API 28 -->
+60        <service
+60-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:51:9-53:40
+61            android:name="com.falconone.bodycamserver.BtServerService"
+61-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:52:13-44
+62            android:exported="false" />
+62-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:53:13-37
+63
+64        <!-- Servicio de subida en background -->
+65        <service
+65-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:56:9-58:40
+66            android:name="com.falconone.bodycamserver.UploadService"
+66-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:57:13-42
+67            android:exported="false" />
+67-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:58:13-37
+68
+69        <!-- Arranque automático al encender la cámara -->
+70        <receiver
+70-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:61:9-67:20
+71            android:name="com.falconone.bodycamserver.BootReceiver"
+71-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:62:13-41
+72            android:exported="true" >
+72-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:63:13-36
+73            <intent-filter>
+73-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:64:13-66:29
+74                <action android:name="android.intent.action.BOOT_COMPLETED" />
+74-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:65:17-79
+74-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:65:25-76
+75            </intent-filter>
+76        </receiver>
+77
+78        <!-- Captura de botones físicos (pantalla apagada / app en background) -->
+79        <!-- Usuario debe activar una vez: Ajustes → Accesibilidad → FalconOne → Activar -->
+80        <service
+80-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:71:9-81:19
+81            android:name="com.falconone.bodycamserver.ButtonAccessibilityService"
+81-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:72:13-55
+82            android:exported="true"
+82-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:74:13-36
+83            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" >
+83-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:73:13-79
+84            <intent-filter>
+84-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:75:13-77:29
+85                <action android:name="android.accessibilityservice.AccessibilityService" />
+85-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:76:17-92
+85-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:76:25-89
+86            </intent-filter>
+87
+88            <meta-data
+88-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:78:13-80:72
+89                android:name="android.accessibilityservice"
+89-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:79:17-60
+90                android:resource="@xml/accessibility_service_config" />
+90-->C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:80:17-69
+91        </service>
+92    </application>
+93
+94</manifest>

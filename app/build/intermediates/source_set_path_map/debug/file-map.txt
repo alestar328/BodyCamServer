@@ -1,0 +1,7 @@
+com.falconone.bodycamserver.app-pngs-0 C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\build\generated\res\pngs\debug
+com.falconone.bodycamserver.app-resValues-1 C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\build\generated\res\resValues\debug
+com.falconone.bodycamserver.app-packageDebugResources-2 C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.falconone.bodycamserver.app-packageDebugResources-3 C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.falconone.bodycamserver.app-merged_res-4 C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\build\intermediates\merged_res\debug
+com.falconone.bodycamserver.app-debug-5 C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\debug\res
+com.falconone.bodycamserver.app-main-6 C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\res

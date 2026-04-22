@@ -1,0 +1,355 @@
+package com.falconone.bodycamserver
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothServerSocket
+import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
+import java.net.HttpURLConnection
+import java.net.URL
+import android.util.Log
+import android.view.KeyEvent
+import java.io.BufferedReader
+import java.io.IOException
+import java.io.InputStreamReader
+import java.io.OutputStream
+import java.util.UUID
+import java.util.concurrent.Executors
+
+private val FALCON_UUID: UUID = UUID.fromString("FA1C0000-1337-4242-CAFE-DEADBEEF0001")
+private const val SERVICE_NAME = "FalconOneServer"
+private const val TAG = "FalconServer"
+private const val NOTIF_CHANNEL = "falcon_bt_server"
+private const val NOTIF_ID = 1
+
+class BtServerService : Service() {
+
+    private val executor = Executors.newCachedThreadPool()
+    private var serverSocket: BluetoothServerSocket? = null
+    private var clientSocket: BluetoothSocket? = null
+    private var output: OutputStream? = null
+    private var running = false
+    private lateinit var wakeLock: PowerManager.WakeLock
+    private lateinit var wifiLock: WifiManager.WifiLock
+
+    // Battery/storage helper (no camera — camera is in RecordingActivity)
+    private val hw = HardwareHelper()
+
+    // Connectivity cache — updated every 30s by background checker
+    @Volatile private var cachedWifiOk = false
+    @Volatile private var cachedApiOk  = false
+    private val connectivityHandler = Handler(Looper.getMainLooper())
+    private val connectivityChecker = object : Runnable {
+        override fun run() {
+            executor.execute {
+                cachedWifiOk = isWifiConnected()
+                cachedApiOk  = if (cachedWifiOk) isApiReachable() else false
+                Log.d(TAG, "Connectivity: wifi=$cachedWifiOk api=$cachedApiOk")
+                if (cachedApiOk) HardwareController.ledBlue() // brief visual feedback
+            }
+            connectivityHandler.postDelayed(this, 30_000)
+        }
+    }
+
+    private fun isWifiConnected(): Boolean {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+    private fun isApiReachable(): Boolean {
+        return try {
+            val conn = URL("https://nexus.aeriaone.com/").openConnection() as HttpURLConnection
+            conn.requestMethod = "HEAD"
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 5_000
+            conn.connect()
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..499  // any response means server is up
+        } catch (e: Exception) {
+            Log.w(TAG, "API check failed: ${e.message}")
+            false
+        }
+    }
+
+    // Receives physical button events broadcast by W1 firmware
+    // key_code 132=F2(record), 133=F3(photo), 134=F4
+    // key_status 0=press, 1=release
+    private val sideKeyReceiver = object : BroadcastReceiver() {
+        private var irEnabled = false
+
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != "android.intent.action.SIDE_KEY_INTENT") return
+            val keyCode = intent.getIntExtra("key_code", 0)
+            val status  = intent.getIntExtra("key_status", -1)
+            Log.d(TAG, "SideKey key_code=$keyCode key_status=$status")
+            if (status != 0) return  // only act on press, not release
+
+            when (keyCode) {
+                KeyEvent.KEYCODE_F2 -> {  // 132 — Recording button
+                    if (RecordingActivity.isRecording) {
+                        Log.d(TAG, "SideKey F2 → STOP recording")
+                        RecordingActivity.stop(context)
+                    } else {
+                        Log.d(TAG, "SideKey F2 → START recording")
+                        RecordingActivity.start(context)
+                    }
+                }
+                KeyEvent.KEYCODE_F3 -> {  // 133 — Photo button
+                    Log.d(TAG, "SideKey F3 → IR toggle")
+                    irEnabled = !irEnabled
+                    if (irEnabled) HardwareController.irOn() else HardwareController.irOff()
+                }
+                KeyEvent.KEYCODE_F4 -> {  // 134 — torch toggle
+                    val on = TorchController.toggle()
+                    Log.d(TAG, "SideKey F4 → Torch ${if (on) "ON" else "OFF"}")
+                }
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "BtServerService onCreate")
+        HardwareController.irOff()  // reset IR state on service start
+        acquireWakeLock()
+        createNotificationChannel()
+        startForeground(NOTIF_ID, buildNotification("Esperando conexión…"))
+        registerReceiver(sideKeyReceiver, IntentFilter("android.intent.action.SIDE_KEY_INTENT"))
+        acquireWifiLock()
+        connectivityHandler.post(connectivityChecker)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!running) {
+            running = true
+            executor.execute(::acceptLoop)
+        }
+        Log.d(TAG, "BtServerService onStartCommand")
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        running = false
+        HardwareController.irOff()
+        HardwareController.ledOff()
+        connectivityHandler.removeCallbacks(connectivityChecker)
+        try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
+        if (RecordingActivity.isRecording) RecordingActivity.stop(this)
+        closeConnections()
+        if (wifiLock.isHeld) wifiLock.release()
+        wakeLock.release()
+        super.onDestroy()
+    }
+
+    // ── BT accept loop ────────────────────────────────────────────────────────
+
+    private fun acceptLoop() {
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: run {
+            Log.e(TAG, "BT not available"); return
+        }
+        Log.d(TAG, "acceptLoop started")
+        while (running) {
+            var ss: BluetoothServerSocket? = null
+            try {
+                try { serverSocket?.close() } catch (_: IOException) {}
+                serverSocket = null
+
+                Log.d(TAG, "Opening RFCOMM server socket…")
+                ss = adapter.listenUsingInsecureRfcommWithServiceRecord(SERVICE_NAME, FALCON_UUID)
+                serverSocket = ss
+                Log.d(TAG, "Waiting for client connection…")
+                updateNotification("Esperando conexión…")
+
+                val socket = ss.accept()
+
+                // Close server socket right after accept — frees SDP slot for next session
+                try { ss.close() } catch (_: IOException) {}
+                serverSocket = null
+
+                clientSocket = socket
+                output = socket.outputStream
+                Log.d(TAG, "Client connected: ${socket.remoteDevice.address}")
+                updateNotification("Teléfono conectado: ${socket.remoteDevice.name}")
+                HardwareController.ledGreen()
+                handleClient(socket)
+            } catch (e: IOException) {
+                Log.e(TAG, "acceptLoop error: ${e.message}")
+                try { ss?.close() } catch (_: IOException) {}
+                serverSocket = null
+                if (running) Thread.sleep(1000)
+            }
+        }
+        Log.d(TAG, "acceptLoop stopped")
+    }
+
+    // ── Command processing ────────────────────────────────────────────────────
+
+    private fun handleClient(socket: BluetoothSocket) {
+        val reader = BufferedReader(InputStreamReader(socket.inputStream))
+        try {
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                val response = processCommand(line!!.trim())
+                send(response)
+            }
+        } catch (_: IOException) {
+            // client disconnected — stop recording if active
+            if (RecordingActivity.isRecording) {
+                Log.d(TAG, "Client disconnected while recording — stopping")
+                RecordingActivity.stop(applicationContext)
+            }
+        } finally {
+            closeClient()
+            updateNotification("Esperando conexión…")
+            HardwareController.ledGreen()
+        }
+    }
+
+    private fun processCommand(raw: String): String {
+        Log.d(TAG, "CMD: $raw")
+        val parts = raw.split(":")
+        return when (parts[0].uppercase()) {
+
+            Cmd.PING -> Rsp.pong()
+
+            Cmd.REC_START -> {
+                if (RecordingActivity.isRecording) {
+                    Rsp.error("Ya grabando")
+                } else {
+                    TorchController.release()  // free Camera1 before Camera2 opens
+                    RecordingActivity.start(applicationContext)
+                    Log.d(TAG, "REC_START — RecordingActivity launched")
+                    Rsp.ok(Cmd.REC_START)
+                }
+            }
+
+            Cmd.REC_STOP -> {
+                if (!RecordingActivity.isRecording) {
+                    Rsp.error("No estaba grabando")
+                } else {
+                    RecordingActivity.stop(applicationContext)
+                    Log.d(TAG, "REC_STOP — broadcast sent")
+                    Rsp.ok(Cmd.REC_STOP)
+                }
+            }
+
+            Cmd.PHOTO -> {
+                val ok = PhotoController.takePhoto(applicationContext)
+                if (ok) Rsp.ok(Cmd.PHOTO) else Rsp.error("Photo failed: recording active or camera error")
+            }
+
+            Cmd.STATUS -> Rsp.status(
+                RecordingActivity.isRecording,
+                hw.batteryLevel(this),
+                hw.storageMb(),
+                cachedWifiOk,
+                cachedApiOk
+            )
+
+            Cmd.IR_ON  -> { HardwareController.irOn();  Rsp.ok(Cmd.IR_ON)  }
+            Cmd.IR_OFF -> { HardwareController.irOff(); Rsp.ok(Cmd.IR_OFF) }
+
+            Cmd.LED -> {
+                val v = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                HardwareController.setLed(v)
+                Rsp.ok("${Cmd.LED}:$v")
+            }
+
+            Cmd.GPS_ON  -> { HardwareController.gpsOn();  Rsp.ok(Cmd.GPS_ON)  }
+            Cmd.GPS_OFF -> { HardwareController.gpsOff(); Rsp.ok(Cmd.GPS_OFF) }
+
+            Cmd.TORCH_ON  -> {
+                val ok = TorchController.turnOn()
+                if (ok) Rsp.ok(Cmd.TORCH_ON) else Rsp.error("Torch no disponible")
+            }
+            Cmd.TORCH_OFF -> { TorchController.turnOff(); Rsp.ok(Cmd.TORCH_OFF) }
+
+            else -> Rsp.error("Comando desconocido: $raw")
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun send(data: String) {
+        try { output?.write(data.toByteArray(Charsets.UTF_8)) } catch (_: IOException) {}
+    }
+
+    private fun closeClient() {
+        try { output?.close() }       catch (_: IOException) {}
+        try { clientSocket?.close() } catch (_: IOException) {}
+        output = null
+        clientSocket = null
+    }
+
+    private fun closeConnections() {
+        closeClient()
+        try { serverSocket?.close() } catch (_: IOException) {}
+        serverSocket = null
+    }
+
+    private fun acquireWifiLock() {
+        val wm = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "FalconOne::WiFi")
+        wifiLock.acquire()
+        Log.d(TAG, "WifiLock acquired (HIGH_PERF)")
+    }
+
+    private fun acquireWakeLock() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FalconOne::BtServer")
+        wakeLock.acquire()
+    }
+
+    private fun createNotificationChannel() {
+        val ch = NotificationChannel(NOTIF_CHANNEL, "FalconOne BT Server", NotificationManager.IMPORTANCE_LOW)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+    }
+
+    private fun buildNotification(text: String): Notification =
+        Notification.Builder(this, NOTIF_CHANNEL)
+            .setContentTitle("FalconOne Server")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .build()
+
+    private fun updateNotification(text: String) {
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(NOTIF_ID, buildNotification(text))
+    }
+}
+
+// Lightweight helper for status queries (battery, storage) without holding camera
+class HardwareHelper {
+    fun batteryLevel(context: android.content.Context): Int {
+        val intent = context.registerReceiver(null,
+            android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
+        return if (level >= 0) (level * 100 / scale) else -1
+    }
+
+    fun storageMb(): Long {
+        val dir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "FalconOne")
+        if (!dir.exists()) dir.mkdirs()
+        val stat = android.os.StatFs(dir.absolutePath)
+        return stat.availableBlocksLong * stat.blockSizeLong / (1024 * 1024)
+    }
+}
