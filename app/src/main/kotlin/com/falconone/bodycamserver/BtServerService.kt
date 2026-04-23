@@ -14,6 +14,8 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -62,6 +64,15 @@ class BtServerService : Service() {
             }
             connectivityHandler.postDelayed(this, 30_000)
         }
+    }
+
+    private fun getWifiIp(): String {
+        return try {
+            NetworkInterface.getNetworkInterfaces().toList()
+                .flatMap { it.inetAddresses.toList() }
+                .firstOrNull { !it.isLoopbackAddress && it is Inet4Address }
+                ?.hostAddress ?: ""
+        } catch (_: Exception) { "" }
     }
 
     private fun isWifiConnected(): Boolean {
@@ -127,6 +138,7 @@ class BtServerService : Service() {
         super.onCreate()
         Log.d(TAG, "BtServerService onCreate")
         HardwareController.irOff()  // reset IR state on service start
+        FileServerService.start()
         acquireWakeLock()
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification("Esperando conexión…"))
@@ -150,6 +162,7 @@ class BtServerService : Service() {
         running = false
         HardwareController.irOff()
         HardwareController.ledOff()
+        FileServerService.stop()
         connectivityHandler.removeCallbacks(connectivityChecker)
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
         if (RecordingActivity.isRecording) RecordingActivity.stop(this)
@@ -261,7 +274,8 @@ class BtServerService : Service() {
                 hw.batteryLevel(this),
                 hw.storageMb(),
                 cachedWifiOk,
-                cachedApiOk
+                cachedApiOk,
+                getWifiIp()
             )
 
             Cmd.IR_ON  -> { HardwareController.irOn();  Rsp.ok(Cmd.IR_ON)  }

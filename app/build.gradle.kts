@@ -31,4 +31,5 @@ android {
 
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }
