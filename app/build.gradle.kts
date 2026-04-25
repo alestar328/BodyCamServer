@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.falconone.bodycamserver"
-    compileSdk = 28
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.falconone.bodycamserver"
@@ -32,4 +32,5 @@ android {
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation("io.agora.rtc:full-sdk:4.3.0")
 }

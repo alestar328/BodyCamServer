@@ -36,7 +36,8 @@
         android:debuggable="true"
         android:extractNativeLibs="false"
         android:icon="@android:drawable/ic_menu_camera"
-        android:label="FalconOne Server" >
+        android:label="FalconOne Server"
+        android:testOnly="true" >
         <activity
             android:name="com.falconone.bodycamserver.MainActivity"
             android:exported="true" >

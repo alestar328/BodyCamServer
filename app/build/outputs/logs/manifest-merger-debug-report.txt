@@ -4,6 +4,7 @@ ADDED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidMani
 INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:2:1-84:12
 INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:2:1-84:12
 INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml:2:1-84:12
+MERGED from [io.agora.rtc:full-sdk:4.3.0] C:\Users\newge\.gradle\caches\8.12\transforms\056faeeb01479196796d961ca37d1a9c\transformed\jetified-full-sdk-4.3.0\AndroidManifest.xml:2:1-11:12
 	package
 		INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml
 	android:versionName
@@ -151,6 +152,8 @@ uses-sdk
 INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml
 INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml
+MERGED from [io.agora.rtc:full-sdk:4.3.0] C:\Users\newge\.gradle\caches\8.12\transforms\056faeeb01479196796d961ca37d1a9c\transformed\jetified-full-sdk-4.3.0\AndroidManifest.xml:7:5-9:41
+MERGED from [io.agora.rtc:full-sdk:4.3.0] C:\Users\newge\.gradle\caches\8.12\transforms\056faeeb01479196796d961ca37d1a9c\transformed\jetified-full-sdk-4.3.0\AndroidManifest.xml:7:5-9:41
 	android:targetSdkVersion
 		INJECTED from C:\Users\newge\Desktop\BodyCam\BodyCamServer\app\src\main\AndroidManifest.xml
 	android:minSdkVersion

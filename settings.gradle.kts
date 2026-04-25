@@ -10,6 +10,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://artifactory.agora.io/artifactory/maven") }
     }
 }
 rootProject.name = "BodyCamServer"

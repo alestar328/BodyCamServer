@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.falconone.bodycamserver.app-mergeDebugResources-2:/values/values.xml",
+            "outputFile": "com.falconone.bodycamserver.app-mergeDebugResources-3:/values/values.xml",
             "map": [
                 {
                     "source": "C:\\Users\\newge\\Desktop\\BodyCam\\BodyCamServer\\app\\src\\main\\res\\values\\strings.xml",
@@ -11,6 +11,23 @@
                         "startOffsets": "55",
                         "endColumns": "158",
                         "endOffsets": "209"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\newge\\.gradle\\caches\\8.12\\transforms\\056faeeb01479196796d961ca37d1a9c\\transformed\\jetified-full-sdk-4.3.0\\res\\values\\values.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "51",
+                        "endOffsets": "102"
+                    },
+                    "to": {
+                        "startLines": "3",
+                        "startColumns": "4",
+                        "startOffsets": "214",
+                        "endColumns": "51",
+                        "endOffsets": "261"
                     }
                 }
             ]

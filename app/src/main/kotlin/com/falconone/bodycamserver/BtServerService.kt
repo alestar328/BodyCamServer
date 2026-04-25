@@ -162,6 +162,7 @@ class BtServerService : Service() {
         running = false
         HardwareController.irOff()
         HardwareController.ledOff()
+        LivestreamService.stop()
         FileServerService.stop()
         connectivityHandler.removeCallbacks(connectivityChecker)
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
@@ -275,8 +276,27 @@ class BtServerService : Service() {
                 hw.storageMb(),
                 cachedWifiOk,
                 cachedApiOk,
-                getWifiIp()
+                getWifiIp(),
+                LivestreamService.isStreaming
             )
+
+            Cmd.STREAM_START -> {
+                if (!cachedWifiOk) {
+                    Rsp.error("Sin WiFi — livestream requiere conexión a internet")
+                } else {
+                    if (RecordingActivity.isRecording) {
+                        RecordingActivity.stop(applicationContext)
+                        Thread.sleep(500) // espera que Camera2 libere la cámara
+                    }
+                    val ok = LivestreamService.start(applicationContext)
+                    if (ok) Rsp.ok(Cmd.STREAM_START) else Rsp.error("Agora no pudo iniciar")
+                }
+            }
+
+            Cmd.STREAM_STOP -> {
+                LivestreamService.stop()
+                Rsp.ok(Cmd.STREAM_STOP)
+            }
 
             Cmd.IR_ON  -> { HardwareController.irOn();  Rsp.ok(Cmd.IR_ON)  }
             Cmd.IR_OFF -> { HardwareController.irOff(); Rsp.ok(Cmd.IR_OFF) }
