@@ -1,4 +1,0 @@
-com.falconone.bodycamserver
-string accessibility_description
-string app_name
-xml accessibility_service_config

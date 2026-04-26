@@ -98,37 +98,54 @@ class BtServerService : Service() {
         }
     }
 
-    // Receives physical button events broadcast by W1 firmware
-    // key_code 132=F2(record), 133=F3(photo), 134=F4
-    // key_status 0=press, 1=release
+    // Physical button mapping (confirmed via getevent):
+    //   F2 = PTT (mic icon)  → toggle bodycam mic in live stream
+    //   F3 = Record (camera) → toggle recording; auto-upload fires on stop
+    //   F4 = Livestream      → toggle Agora stream; notifies phone to sync
     private val sideKeyReceiver = object : BroadcastReceiver() {
-        private var irEnabled = false
-
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != "android.intent.action.SIDE_KEY_INTENT") return
             val keyCode = intent.getIntExtra("key_code", 0)
             val status  = intent.getIntExtra("key_status", -1)
             Log.d(TAG, "SideKey key_code=$keyCode key_status=$status")
-            if (status != 0) return  // only act on press, not release
+            if (status == 1) return  // ignore release; accept 0 (press) and -1 (W1 firmware)
+            if (!ButtonDebounce.tryAcquire()) return  // onKeyDown already handled this press
 
+            // Run on executor so RtcEngine.create/destroy don't block the main thread.
+            // This keeps sideKeyReceiver fast (<5ms) so onKeyDown arrives while debounce
+            // is still active (within 300ms) and gets correctly discarded.
             when (keyCode) {
-                KeyEvent.KEYCODE_F2 -> {  // 132 — Recording button
+                KeyEvent.KEYCODE_F2 -> executor.execute {
+                    val on = LivestreamService.toggleMic()
+                    Log.d(TAG, "SideKey F2 → PTT mic ${if (on) "ON" else "OFF"}")
+                    send(Ntf.PTT)
+                }
+                KeyEvent.KEYCODE_F3 -> executor.execute {
                     if (RecordingActivity.isRecording) {
-                        Log.d(TAG, "SideKey F2 → STOP recording")
+                        Log.d(TAG, "SideKey F3 → STOP recording")
                         RecordingActivity.stop(context)
+                        send(Ntf.REC_STOP)
                     } else {
-                        Log.d(TAG, "SideKey F2 → START recording")
+                        Log.d(TAG, "SideKey F3 → START recording")
+                        TorchController.release()
                         RecordingActivity.start(context)
+                        send(Ntf.REC_START)
                     }
                 }
-                KeyEvent.KEYCODE_F3 -> {  // 133 — Photo button
-                    Log.d(TAG, "SideKey F3 → IR toggle")
-                    irEnabled = !irEnabled
-                    if (irEnabled) HardwareController.irOn() else HardwareController.irOff()
-                }
-                KeyEvent.KEYCODE_F4 -> {  // 134 — torch toggle
-                    val on = TorchController.toggle()
-                    Log.d(TAG, "SideKey F4 → Torch ${if (on) "ON" else "OFF"}")
+                KeyEvent.KEYCODE_F4 -> executor.execute {
+                    if (LivestreamService.isStreaming) {
+                        Log.d(TAG, "SideKey F4 → STREAM STOP")
+                        LivestreamService.stop()
+                        send(Ntf.STREAM_STOP)
+                    } else {
+                        if (RecordingActivity.isRecording) {
+                            RecordingActivity.stop(context)
+                            Thread.sleep(500)
+                        }
+                        Log.d(TAG, "SideKey F4 → STREAM START")
+                        val ok = LivestreamService.start(context)
+                        send(if (ok) Ntf.STREAM_START else Rsp.error("Agora no pudo iniciar"))
+                    }
                 }
             }
         }

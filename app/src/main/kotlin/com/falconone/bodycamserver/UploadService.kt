@@ -106,10 +106,10 @@ class UploadService : IntentService("FalconUploadService") {
             conn.outputStream.buffered().use { out ->
                 val writer = OutputStreamWriter(out, Charsets.UTF_8)
 
-                // Field: device_id
+                // Field: officer_code (required by Nexus API)
                 writer.write("$twoHyphens$boundary$crlf")
-                writer.write("Content-Disposition: form-data; name=\"device_id\"$crlf$crlf")
-                writer.write(deviceId)
+                writer.write("Content-Disposition: form-data; name=\"officer_code\"$crlf$crlf")
+                writer.write("off-001")
                 writer.write(crlf)
 
                 // Field: raw_metadata

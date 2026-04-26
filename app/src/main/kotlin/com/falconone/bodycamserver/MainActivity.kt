@@ -23,15 +23,16 @@ class MainActivity : Activity() {
 
     private lateinit var statusText: TextView
     private lateinit var btnRecord: Button
+    private lateinit var btnStream: Button
     private lateinit var btStatusText: TextView
 
     private val handler = Handler(Looper.getMainLooper())
-    private var irEnabled = false
 
-    // Refresh UI every second to reflect recording state changes
+    // Refresh UI every second to reflect recording/streaming state changes
     private val uiRefresher = object : Runnable {
         override fun run() {
             updateRecordButton()
+            updateStreamButton()
             handler.postDelayed(this, 1000)
         }
     }
@@ -40,6 +41,7 @@ class MainActivity : Activity() {
     private val recordingReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             updateRecordButton()
+            updateStreamButton()
         }
     }
 
@@ -102,7 +104,7 @@ class MainActivity : Activity() {
 
         root.addView(spacer(16))
 
-        // ── Botón grabación ───────────────────────────────────────────────────
+        // ── Indicador grabación ───────────────────────────────────────────────
         btnRecord = Button(this).apply {
             textSize = 15f
             setTypeface(null, Typeface.BOLD)
@@ -112,13 +114,25 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams.MATCH_PARENT, 120
         ))
 
+        root.addView(spacer(10))
+
+        // ── Indicador livestream ──────────────────────────────────────────────
+        btnStream = Button(this).apply {
+            textSize = 15f
+            setTypeface(null, Typeface.BOLD)
+            setOnClickListener { toggleLivestream() }
+        }
+        root.addView(btnStream, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 120
+        ))
+
         root.addView(spacer(24))
 
         // ── Botones físicos configurados ──────────────────────────────────────
         root.addView(sectionLabel("Botones físicos"))
-        root.addView(buttonRow("F2  (frontal)", "Grabar / Detener"))
-        root.addView(buttonRow("F3  (lateral sup.)", "IR infrarrojo"))
-        root.addView(buttonRow("F4  (lateral inf.)", "Flash / Linterna"))
+        root.addView(buttonRow("F2  (frontal)", "PTT — micrófono"))
+        root.addView(buttonRow("F3  (lateral sup.)", "Grabar / Detener"))
+        root.addView(buttonRow("F4  (lateral inf.)", "Livestream"))
 
         setContentView(root)
 
@@ -126,6 +140,8 @@ class MainActivity : Activity() {
         if (allPermissionsGranted()) startServer()
 
         registerReceiver(recordingReceiver, IntentFilter(RecordingActivity.ACTION_STOP))
+        updateRecordButton()
+        updateStreamButton()
         handler.post(uiRefresher)
     }
 
@@ -154,13 +170,25 @@ class MainActivity : Activity() {
 
     private fun updateRecordButton() {
         if (RecordingActivity.isRecording) {
-            btnRecord.text = "⏹  Detener grabación"
+            btnRecord.text = "⏹  Grabando…"
             btnRecord.setBackgroundColor(Color.parseColor("#c0392b"))
             btnRecord.setTextColor(Color.WHITE)
         } else {
             btnRecord.text = "⏺  Iniciar grabación"
-            btnRecord.setBackgroundColor(Color.parseColor("#27ae60"))
-            btnRecord.setTextColor(Color.WHITE)
+            btnRecord.setBackgroundColor(Color.parseColor("#2c3e50"))
+            btnRecord.setTextColor(Color.parseColor("#aaaaaa"))
+        }
+    }
+
+    private fun updateStreamButton() {
+        if (LivestreamService.isStreaming) {
+            btnStream.text = "⏹  Livestream activo…"
+            btnStream.setBackgroundColor(Color.parseColor("#1a6fb5"))
+            btnStream.setTextColor(Color.WHITE)
+        } else {
+            btnStream.text = "📡  Iniciar livestream"
+            btnStream.setBackgroundColor(Color.parseColor("#2c3e50"))
+            btnStream.setTextColor(Color.parseColor("#aaaaaa"))
         }
     }
 
@@ -168,15 +196,37 @@ class MainActivity : Activity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         Log.d("FalconKeys", "MainActivity onKeyDown: $keyCode")
-        return when (keyCode) {
-            KeyEvent.KEYCODE_F2 -> { toggleRecording(); true }
-            KeyEvent.KEYCODE_F3 -> {
-                irEnabled = !irEnabled
-                if (irEnabled) HardwareController.irOn() else HardwareController.irOff()
-                true
+        when (keyCode) {
+            KeyEvent.KEYCODE_F2 -> {
+                if (!ButtonDebounce.tryAcquire()) return true
+                LivestreamService.toggleMic()
             }
-            KeyEvent.KEYCODE_F4 -> { TorchController.toggle(); true }
-            else -> super.onKeyDown(keyCode, event)
+            KeyEvent.KEYCODE_F3 -> {
+                if (!ButtonDebounce.tryAcquire()) return true
+                toggleRecording()
+                updateRecordButton()  // immediate visual
+            }
+            KeyEvent.KEYCODE_F4 -> {
+                if (!ButtonDebounce.tryAcquire()) return true
+                toggleLivestream()
+            }
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        return true
+    }
+
+    private fun toggleLivestream() {
+        if (LivestreamService.isStreaming) {
+            LivestreamService.stop()
+            updateStreamButton()  // immediate
+        } else {
+            if (RecordingActivity.isRecording) RecordingActivity.stop(this)
+            // Immediate "connecting" feedback before Agora confirms join
+            btnStream.text = "📡  Conectando livestream…"
+            btnStream.setBackgroundColor(Color.parseColor("#1565c0"))
+            btnStream.setTextColor(Color.WHITE)
+            LivestreamService.start(this)
+            // uiRefresher updates to final state once isStreaming = true
         }
     }
 

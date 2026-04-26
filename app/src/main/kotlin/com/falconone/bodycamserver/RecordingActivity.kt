@@ -229,10 +229,10 @@ class RecordingActivity : Activity() {
         finish()
     }
 
-    // F2 while recording → stop. All other buttons pass through.
+    // F3 while recording → stop. All other buttons pass through.
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_F2 && isRecording) {
-            Log.d(TAG, "F2 → stop recording")
+        if (keyCode == KeyEvent.KEYCODE_F3 && isRecording) {
+            Log.d(TAG, "F3 → stop recording")
             stopAndFinish()
             return true
         }

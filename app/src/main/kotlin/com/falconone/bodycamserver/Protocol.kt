@@ -20,6 +20,24 @@ object Cmd {
 
 const val FILE_SERVER_PORT = 8080
 
+// Debounce compartido entre sideKeyReceiver y onKeyDown para evitar doble disparo
+object ButtonDebounce {
+    @Volatile private var lastMs = 0L
+    fun tryAcquire(): Boolean {
+        val now = System.currentTimeMillis()
+        return if (now - lastMs > 300) { lastMs = now; true } else false
+    }
+}
+
+// Notificaciones no solicitadas que envía la bodycam al pulsar botones físicos
+object Ntf {
+    const val REC_START    = "BTN_REC_START\n"
+    const val REC_STOP     = "BTN_REC_STOP\n"
+    const val STREAM_START = "BTN_STREAM_START\n"
+    const val STREAM_STOP  = "BTN_STREAM_STOP\n"
+    const val PTT          = "BTN_PTT\n"
+}
+
 // Respuestas que envía la bodycam al teléfono
 object Rsp {
     fun ok(cmd: String) = "OK:$cmd\n"

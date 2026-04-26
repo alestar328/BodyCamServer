@@ -22,6 +22,9 @@ object LivestreamService {
     @Volatile var isStreaming = false
         private set
 
+    @Volatile private var _micEnabled = false
+    val isMicEnabled get() = _micEnabled
+
     private var engine: RtcEngine? = null
 
     fun start(context: Context): Boolean {
@@ -90,6 +93,19 @@ object LivestreamService {
         }
     }
 
+    fun toggleMic(): Boolean {
+        val eng = engine ?: return false
+        _micEnabled = !_micEnabled
+        val options = ChannelMediaOptions().apply {
+            publishMicrophoneTrack = _micEnabled
+        }
+        if (_micEnabled) eng.enableAudio()
+        eng.updateChannelMediaOptions(options)
+        if (!_micEnabled) eng.disableAudio()
+        Log.d(TAG, "PTT mic ${if (_micEnabled) "ON" else "OFF"}")
+        return _micEnabled
+    }
+
     fun stop() {
         try {
             engine?.leaveChannel()
@@ -99,6 +115,7 @@ object LivestreamService {
         } finally {
             engine = null
             isStreaming = false
+            _micEnabled = false
             HardwareController.ledGreen()
             Log.d(TAG, "Livestream stopped")
         }
