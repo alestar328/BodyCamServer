@@ -131,8 +131,8 @@ class MainActivity : Activity() {
         // ── Botones físicos configurados ──────────────────────────────────────
         root.addView(sectionLabel("Botones físicos"))
         root.addView(buttonRow("F2  (frontal)", "PTT — micrófono"))
-        root.addView(buttonRow("F3  (lateral sup.)", "Grabar / Detener"))
-        root.addView(buttonRow("F4  (lateral inf.)", "Livestream"))
+        root.addView(buttonRow("F3  (lateral sup.)", "Livestream"))
+        root.addView(buttonRow("F4  (lateral inf.)", "Grabar / Detener"))
 
         setContentView(root)
 
@@ -203,12 +203,12 @@ class MainActivity : Activity() {
             }
             KeyEvent.KEYCODE_F3 -> {
                 if (!ButtonDebounce.tryAcquire()) return true
-                toggleRecording()
-                updateRecordButton()  // immediate visual
+                toggleLivestream()
             }
             KeyEvent.KEYCODE_F4 -> {
                 if (!ButtonDebounce.tryAcquire()) return true
-                toggleLivestream()
+                toggleRecording()
+                updateRecordButton()  // immediate visual
             }
             else -> return super.onKeyDown(keyCode, event)
         }

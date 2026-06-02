@@ -98,10 +98,10 @@ class BtServerService : Service() {
         }
     }
 
-    // Physical button mapping (confirmed via getevent):
-    //   F2 = PTT (mic icon)  → toggle bodycam mic in live stream
-    //   F3 = Record (camera) → toggle recording; auto-upload fires on stop
-    //   F4 = Livestream      → toggle Agora stream; notifies phone to sync
+    // Physical button mapping (confirmed via logcat 2026-06-02; key_code F2=132/F3=133/F4=134):
+    //   F2 = PTT (mic)       → toggle bodycam mic in live stream
+    //   F3 = Livestream      → toggle Agora stream; notifies phone to sync
+    //   F4 = Record (camera) → toggle recording; auto-upload fires on stop
     private val sideKeyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != "android.intent.action.SIDE_KEY_INTENT") return
@@ -121,20 +121,8 @@ class BtServerService : Service() {
                     send(Ntf.PTT)
                 }
                 KeyEvent.KEYCODE_F3 -> executor.execute {
-                    if (RecordingActivity.isRecording) {
-                        Log.d(TAG, "SideKey F3 → STOP recording")
-                        RecordingActivity.stop(context)
-                        send(Ntf.REC_STOP)
-                    } else {
-                        Log.d(TAG, "SideKey F3 → START recording")
-                        TorchController.release()
-                        RecordingActivity.start(context)
-                        send(Ntf.REC_START)
-                    }
-                }
-                KeyEvent.KEYCODE_F4 -> executor.execute {
                     if (LivestreamService.isStreaming) {
-                        Log.d(TAG, "SideKey F4 → STREAM STOP")
+                        Log.d(TAG, "SideKey F3 → STREAM STOP")
                         LivestreamService.stop()
                         send(Ntf.STREAM_STOP)
                     } else {
@@ -142,12 +130,46 @@ class BtServerService : Service() {
                             RecordingActivity.stop(context)
                             Thread.sleep(500)
                         }
-                        Log.d(TAG, "SideKey F4 → STREAM START")
+                        Log.d(TAG, "SideKey F3 → STREAM START")
                         val ok = LivestreamService.start(context)
                         send(if (ok) Ntf.STREAM_START else Rsp.error("Agora no pudo iniciar"))
                     }
                 }
+                KeyEvent.KEYCODE_F4 -> executor.execute {
+                    if (RecordingActivity.isRecording) {
+                        Log.d(TAG, "SideKey F4 → STOP recording")
+                        RecordingActivity.stop(context)
+                        send(Ntf.REC_STOP)
+                    } else {
+                        Log.d(TAG, "SideKey F4 → START recording")
+                        TorchController.release()
+                        RecordingActivity.start(context)
+                        send(Ntf.REC_START)
+                    }
+                }
             }
+        }
+    }
+
+    // ── SMOKE TEST (vendor com.smarteye.mcu side-key broadcasts) ───────────────
+    // Confirms whether the firmware's physical-button broadcasts reach a 3rd-party
+    // runtime-registered receiver. Filter logcat with tag "FalconSmoke".
+    // Remove this block once the coexistence strategy is validated.
+    private val smokeKeyActions = arrayOf(
+        "android.intent.action.PRESS_VIDEO_KEY",  "android.intent.action.LONG_PRESS_VIDEO_KEY",
+        "android.intent.action.PRESS_RECORD_KEY", "android.intent.action.LONG_PRESS_RECORD_KEY",
+        "android.intent.action.PRESS_PIC_KEY",    "android.intent.action.LONG_PRESS_PIC_KEY",
+        "android.intent.action.DOWN_PTT_KEY",     "android.intent.action.UP_PTT_KEY",
+        "android.intent.action.PRESS_SOS_KEY",    "android.intent.action.LONG_PRESS_SOS_KEY",
+        "android.intent.action.PRESS_MARK_KEY",   "android.intent.action.LONG_PRESS_MARK_KEY",
+        // also the keycode-style broadcast used by the DSI variant, just in case:
+        "android.intent.action.SIDE_KEY_INTENT",
+    )
+    private val smokeKeyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val sb = StringBuilder()
+            intent.extras?.let { ex -> for (k in ex.keySet()) sb.append("$k=${ex.get(k)} ") }
+            Log.i("FalconSmoke", "BTN action=${intent.action}  extras[$sb]")
         }
     }
 
@@ -160,6 +182,7 @@ class BtServerService : Service() {
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification("Esperando conexión…"))
         registerReceiver(sideKeyReceiver, IntentFilter("android.intent.action.SIDE_KEY_INTENT"))
+        registerReceiver(smokeKeyReceiver, IntentFilter().apply { smokeKeyActions.forEach { addAction(it) } })
         acquireWifiLock()
         connectivityHandler.post(connectivityChecker)
     }
@@ -183,6 +206,7 @@ class BtServerService : Service() {
         FileServerService.stop()
         connectivityHandler.removeCallbacks(connectivityChecker)
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(smokeKeyReceiver) } catch (_: Exception) {}
         if (RecordingActivity.isRecording) RecordingActivity.stop(this)
         closeConnections()
         if (wifiLock.isHeld) wifiLock.release()
