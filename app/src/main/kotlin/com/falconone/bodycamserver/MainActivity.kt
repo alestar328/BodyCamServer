@@ -15,6 +15,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -25,6 +26,7 @@ class MainActivity : Activity() {
     private lateinit var btnRecord: Button
     private lateinit var btnStream: Button
     private lateinit var btStatusText: TextView
+    private lateinit var sosWarning: Button
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -33,6 +35,7 @@ class MainActivity : Activity() {
         override fun run() {
             updateRecordButton()
             updateStreamButton()
+            updateSosWarning()
             handler.postDelayed(this, 1000)
         }
     }
@@ -42,7 +45,14 @@ class MainActivity : Activity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             updateRecordButton()
             updateStreamButton()
+            updateSosWarning()
         }
+    }
+
+    // SOS banner = visible while the bodycam is livestreaming (SOS active).
+    private fun updateSosWarning() {
+        sosWarning.visibility =
+            if (LivestreamService.isStreaming) View.VISIBLE else View.GONE
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,6 +74,26 @@ class MainActivity : Activity() {
         })
 
         root.addView(spacer(12))
+
+        // ── Aviso SOS (visible solo mientras emite = SOS activo) ──────────────
+        // El SOS de la bodycam = livestream (botón F3). Mientras emite, mostramos
+        // este banner rojo bien visible; tocarlo PARA el stream = desactiva el SOS
+        // (el móvil lo detecta por Agora, uid 9001 → null).
+        sosWarning = Button(this).apply {
+            text = "⚠  SOS ACTIVO\nToca para desactivar"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#c0392b"))
+            visibility = View.GONE
+            setOnClickListener {
+                if (LivestreamService.isStreaming) toggleLivestream()
+                updateSosWarning()
+            }
+        }
+        root.addView(sosWarning, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 140
+        ).apply { bottomMargin = 16 })
 
         // ── Estado BT ─────────────────────────────────────────────────────────
         btStatusText = TextView(this).apply {
@@ -142,6 +172,7 @@ class MainActivity : Activity() {
         registerReceiver(recordingReceiver, IntentFilter(RecordingActivity.ACTION_STOP))
         updateRecordButton()
         updateStreamButton()
+        updateSosWarning()
         handler.post(uiRefresher)
     }
 

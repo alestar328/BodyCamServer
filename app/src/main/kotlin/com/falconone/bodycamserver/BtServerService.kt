@@ -98,10 +98,17 @@ class BtServerService : Service() {
         }
     }
 
-    // Physical button mapping (confirmed via logcat 2026-06-02; key_code F2=132/F3=133/F4=134):
-    //   F2 = PTT (mic)       → toggle bodycam mic in live stream
-    //   F3 = Livestream      → toggle Agora stream; notifies phone to sync
-    //   F4 = Record (camera) → toggle recording; auto-upload fires on stop
+    // Physical button mapping — VERIFIED via logcat (FalconSmoke / SIDE_KEY_INTENT)
+    // on 2026-06-03 (confirmed THREE times). Each physical button emits:
+    //   • 132 / KEYCODE_F2 = "PTT / audio" button → toggle livestream mic        → BTN_PTT
+    //   • 133 / KEYCODE_F3 = "SOS" button         → toggle Agora livestream       → BTN_STREAM_*
+    //   • 134 / KEYCODE_F4 = "record" button      → toggle local recording        → BTN_REC_*
+    //
+    // The physical SOS button (133) is wired to LIVESTREAM on purpose: the bodycam
+    // joining Agora (uid 9001) IS the SOS signal the phone reacts to. In Falcon One,
+    // BTN_STREAM_* / uid-9001-live == SOS popup. Normal recording (134) stays local
+    // and must NEVER raise SOS on the phone. Do NOT swap F3/F4 — this matches the
+    // hardware (we flip-flopped twice before the logcat settled it).
     private val sideKeyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != "android.intent.action.SIDE_KEY_INTENT") return
