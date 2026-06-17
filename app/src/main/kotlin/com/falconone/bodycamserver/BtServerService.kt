@@ -60,7 +60,6 @@ class BtServerService : Service() {
                 cachedWifiOk = isWifiConnected()
                 cachedApiOk  = if (cachedWifiOk) isApiReachable() else false
                 Log.d(TAG, "Connectivity: wifi=$cachedWifiOk api=$cachedApiOk")
-                if (cachedApiOk) HardwareController.ledBlue() // brief visual feedback
             }
             connectivityHandler.postDelayed(this, 30_000)
         }
@@ -184,6 +183,7 @@ class BtServerService : Service() {
         super.onCreate()
         Log.d(TAG, "BtServerService onCreate")
         HardwareController.irOff()  // reset IR state on service start
+        HardwareController.ledGreen()  // standby — evita que quede azul pegado del firmware/sesión previa
         FileServerService.start()
         acquireWakeLock()
         createNotificationChannel()
