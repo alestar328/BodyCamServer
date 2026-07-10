@@ -39,11 +39,20 @@ private const val NOTIF_ID = 1
 
 class BtServerService : Service() {
 
+    companion object {
+        // Estado observable por MainActivity (mismo patrón que
+        // LivestreamService.isStreaming / RecordingActivity.isRecording).
+        @Volatile var isRunning = false
+            private set
+        // Nombre y MAC del teléfono conectado, o null sin cliente.
+        @Volatile var connectedClient: String? = null
+            private set
+    }
+
     private val executor = Executors.newCachedThreadPool()
     private var serverSocket: BluetoothServerSocket? = null
     private var clientSocket: BluetoothSocket? = null
     private var output: OutputStream? = null
-    private var running = false
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var wifiLock: WifiManager.WifiLock
 
@@ -195,8 +204,8 @@ class BtServerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!running) {
-            running = true
+        if (!isRunning) {
+            isRunning = true
             executor.execute(::acceptLoop)
         }
         Log.d(TAG, "BtServerService onStartCommand")
@@ -206,7 +215,7 @@ class BtServerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        running = false
+        isRunning = false
         HardwareController.irOff()
         HardwareController.ledOff()
         LivestreamService.stop()
@@ -215,6 +224,7 @@ class BtServerService : Service() {
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(smokeKeyReceiver) } catch (_: Exception) {}
         if (RecordingActivity.isRecording) RecordingActivity.stop(this)
+        connectedClient = null
         closeConnections()
         if (wifiLock.isHeld) wifiLock.release()
         wakeLock.release()
@@ -228,7 +238,7 @@ class BtServerService : Service() {
             Log.e(TAG, "BT not available"); return
         }
         Log.d(TAG, "acceptLoop started")
-        while (running) {
+        while (isRunning) {
             var ss: BluetoothServerSocket? = null
             try {
                 try { serverSocket?.close() } catch (_: IOException) {}
@@ -248,15 +258,17 @@ class BtServerService : Service() {
 
                 clientSocket = socket
                 output = socket.outputStream
-                Log.d(TAG, "Client connected: ${socket.remoteDevice.address}")
-                updateNotification("Teléfono conectado: ${socket.remoteDevice.name}")
+                val device = socket.remoteDevice
+                connectedClient = device.name?.let { "$it (${device.address})" } ?: device.address
+                Log.d(TAG, "Client connected: ${device.address}")
+                updateNotification("Teléfono conectado: $connectedClient")
                 HardwareController.ledGreen()
                 handleClient(socket)
             } catch (e: IOException) {
                 Log.e(TAG, "acceptLoop error: ${e.message}")
                 try { ss?.close() } catch (_: IOException) {}
                 serverSocket = null
-                if (running) Thread.sleep(1000)
+                if (isRunning) Thread.sleep(1000)
             }
         }
         Log.d(TAG, "acceptLoop stopped")
@@ -273,12 +285,15 @@ class BtServerService : Service() {
                 send(response)
             }
         } catch (_: IOException) {
-            // client disconnected — stop recording if active
+            // Client disconnected. Do NOT stop an active recording: BT drops are
+            // routine (2.4 GHz coexistence with the livestream, body attenuation)
+            // and the phone auto-reconnects. Recording is local evidence — it only
+            // stops by physical button or explicit REC_STOP command.
             if (RecordingActivity.isRecording) {
-                Log.d(TAG, "Client disconnected while recording — stopping")
-                RecordingActivity.stop(applicationContext)
+                Log.d(TAG, "Client disconnected while recording — recording continues")
             }
         } finally {
+            connectedClient = null
             closeClient()
             updateNotification("Esperando conexión…")
             HardwareController.ledGreen()
@@ -370,6 +385,10 @@ class BtServerService : Service() {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // Synchronized: command responses (handleClient thread) and BTN_* notifications
+    // (side-key executor threads) write to the same stream; without this their
+    // bytes can interleave inside a single line and corrupt the protocol.
+    @Synchronized
     private fun send(data: String) {
         try { output?.write(data.toByteArray(Charsets.UTF_8)) } catch (_: IOException) {}
     }

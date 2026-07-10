@@ -30,13 +30,35 @@ class MainActivity : Activity() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    // Refresh UI every second to reflect recording/streaming state changes
+    // Refresh UI every second to reflect recording/streaming/BT state changes
     private val uiRefresher = object : Runnable {
         override fun run() {
             updateRecordButton()
             updateStreamButton()
             updateSosWarning()
+            updateBtStatus()
             handler.postDelayed(this, 1000)
+        }
+    }
+
+    // Single source of truth for the BT status line: reads the service state
+    // instead of one-shot writes that go stale (the old "Esperando teléfono…"
+    // stayed forever even with a phone connected).
+    private fun updateBtStatus() {
+        val cliente = BtServerService.connectedClient
+        when {
+            !BtServerService.isRunning -> {
+                btStatusText.text = "Servidor detenido"
+                btStatusText.setTextColor(Color.parseColor("#aaaaaa"))
+            }
+            cliente != null -> {
+                btStatusText.text = "📱 Conectado: $cliente"
+                btStatusText.setTextColor(Color.parseColor("#2ecc71"))
+            }
+            else -> {
+                btStatusText.text = "Esperando teléfono…"
+                btStatusText.setTextColor(Color.parseColor("#f0a500"))
+            }
         }
     }
 
@@ -124,7 +146,6 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setOnClickListener {
                 stopService(Intent(this@MainActivity, BtServerService::class.java))
-                btStatusText.text = "Servidor detenido"
             }
         }
 
@@ -186,8 +207,7 @@ class MainActivity : Activity() {
 
     private fun startServer() {
         startForegroundService(Intent(this, BtServerService::class.java))
-        btStatusText.text = "Esperando teléfono…"
-        btStatusText.setTextColor(Color.parseColor("#f0a500"))
+        // uiRefresher pinta el estado real (esperando / conectado) cada segundo.
     }
 
     private fun toggleRecording() {
