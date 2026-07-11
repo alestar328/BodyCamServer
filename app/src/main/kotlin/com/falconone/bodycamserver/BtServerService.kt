@@ -145,6 +145,7 @@ class BtServerService : Service() {
                             RecordingActivity.stop(context)
                             Thread.sleep(500)
                         }
+                        PreviewController.stop()
                         Log.d(TAG, "SideKey F3 → STREAM START")
                         val ok = LivestreamService.start(context)
                         send(if (ok) Ntf.STREAM_START else Rsp.error("Agora no pudo iniciar"))
@@ -158,6 +159,7 @@ class BtServerService : Service() {
                     } else {
                         Log.d(TAG, "SideKey F4 → START recording")
                         TorchController.release()
+                        PreviewController.stop()
                         RecordingActivity.start(context)
                         send(Ntf.REC_START)
                     }
@@ -219,6 +221,7 @@ class BtServerService : Service() {
         HardwareController.irOff()
         HardwareController.ledOff()
         LivestreamService.stop()
+        PreviewController.stop()
         FileServerService.stop()
         connectivityHandler.removeCallbacks(connectivityChecker)
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
@@ -295,6 +298,9 @@ class BtServerService : Service() {
         } finally {
             connectedClient = null
             closeClient()
+            // Sin teléfono nadie mira el visor: se libera la cámara para no
+            // drenar batería. Si el enlace vuelve, el teléfono lo reabre.
+            PreviewController.stop()
             updateNotification("Esperando conexión…")
             HardwareController.ledGreen()
         }
@@ -312,6 +318,7 @@ class BtServerService : Service() {
                     Rsp.error("Ya grabando")
                 } else {
                     TorchController.release()  // free Camera1 before Camera2 opens
+                    PreviewController.stop()   // el visor también usa Camera1
                     RecordingActivity.start(applicationContext)
                     Log.d(TAG, "REC_START — RecordingActivity launched")
                     Rsp.ok(Cmd.REC_START)
@@ -329,8 +336,32 @@ class BtServerService : Service() {
             }
 
             Cmd.PHOTO -> {
-                val ok = PhotoController.takePhoto(applicationContext)
+                // Con el visor abierto la foto usa esa misma sesión de cámara:
+                // lo que el teléfono ve es exactamente lo que se captura.
+                val ok = if (PreviewController.isActive) {
+                    PreviewController.takePhoto(applicationContext)
+                } else {
+                    PhotoController.takePhoto(applicationContext)
+                }
                 if (ok) Rsp.ok(Cmd.PHOTO) else Rsp.error("Photo failed: recording active or camera error")
+            }
+
+            Cmd.PREVIEW_START -> {
+                if (RecordingActivity.isRecording) {
+                    Rsp.error("Grabando — el visor no está disponible")
+                } else if (LivestreamService.isStreaming) {
+                    Rsp.error("Livestream activo — el visor no está disponible")
+                } else if (!cachedWifiOk) {
+                    Rsp.error("Sin WiFi — el visor viaja por WiFi")
+                } else {
+                    val ok = PreviewController.start()
+                    if (ok) Rsp.ok(Cmd.PREVIEW_START) else Rsp.error("No se pudo abrir la cámara")
+                }
+            }
+
+            Cmd.PREVIEW_STOP -> {
+                PreviewController.stop()
+                Rsp.ok(Cmd.PREVIEW_STOP)
             }
 
             Cmd.STATUS -> Rsp.status(
@@ -340,7 +371,8 @@ class BtServerService : Service() {
                 cachedWifiOk,
                 cachedApiOk,
                 getWifiIp(),
-                LivestreamService.isStreaming
+                LivestreamService.isStreaming,
+                PreviewController.isActive
             )
 
             Cmd.STREAM_START -> {
@@ -351,6 +383,7 @@ class BtServerService : Service() {
                         RecordingActivity.stop(applicationContext)
                         Thread.sleep(500) // espera que Camera2 libere la cámara
                     }
+                    PreviewController.stop() // Agora necesita la cámara para sí
                     val ok = LivestreamService.start(applicationContext)
                     if (ok) Rsp.ok(Cmd.STREAM_START) else Rsp.error("Agora no pudo iniciar")
                 }

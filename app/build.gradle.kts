@@ -31,6 +31,7 @@ android {
 
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
-    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    // NanoHTTPD va incorporado como fuente en src/main/java/fi/iki/elonen con un
+    // patch: sin el reverse DNS bloqueante que retrasaba ~10 s cada peticion.
     implementation("io.agora.rtc:full-sdk:4.3.0")
 }

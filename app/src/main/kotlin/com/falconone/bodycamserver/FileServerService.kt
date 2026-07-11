@@ -31,6 +31,8 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
                 handleDownload(filename)
             }
             uri == "/status"            -> handleStatus()
+            uri == "/preview"           -> handlePreview()
+            uri == "/preview/stream"    -> handlePreviewStream()
             else -> newFixedLengthResponse(
                 Response.Status.NOT_FOUND, MIME_JSON,
                 """{"error":"Not found","path":"$uri"}""" as String
@@ -104,6 +106,60 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
         return jsonResponse(obj.toString())
     }
 
+    // GET /preview — último frame JPEG del visor remoto (PREVIEW_START por BT).
+    // Un solo frame; útil para diagnóstico con curl. La app usa /preview/stream.
+    private fun handlePreview(): Response {
+        val jpeg = PreviewController.latestJpeg()
+            ?: return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON,
+                """{"error":"Preview not active"}""" as String
+            )
+        return newFixedLengthResponse(
+            Response.Status.OK, "image/jpeg",
+            java.io.ByteArrayInputStream(jpeg) as java.io.InputStream, jpeg.size.toLong()
+        )
+    }
+
+    // GET /preview/stream — MJPEG continuo (multipart/x-mixed-replace): un hilo
+    // empuja el frame actual cada STREAM_FRAME_MILLIS por la misma conexión.
+    // Termina solo cuando el visor se apaga o el cliente corta la conexión
+    // (la escritura falla y el hilo muere).
+    private fun handlePreviewStream(): Response {
+        if (!PreviewController.isActive) {
+            return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON,
+                """{"error":"Preview not active"}""" as String
+            )
+        }
+        val entrada = java.io.PipedInputStream(STREAM_PIPE_BYTES)
+        val salida = java.io.PipedOutputStream(entrada)
+        Thread {
+            try {
+                while (PreviewController.isActive) {
+                    val jpeg = PreviewController.latestJpeg() ?: break
+                    salida.write(
+                        ("--$STREAM_BOUNDARY\r\n" +
+                            "Content-Type: image/jpeg\r\n" +
+                            "Content-Length: ${jpeg.size}\r\n\r\n").toByteArray()
+                    )
+                    salida.write(jpeg)
+                    salida.write("\r\n".toByteArray())
+                    salida.flush()
+                    Thread.sleep(STREAM_FRAME_MILLIS)
+                }
+            } catch (_: Exception) {
+                // Cliente desconectado o visor apagado: fin normal del stream.
+            } finally {
+                try { salida.close() } catch (_: Exception) {}
+            }
+        }.start()
+        return newChunkedResponse(
+            Response.Status.OK,
+            "multipart/x-mixed-replace; boundary=$STREAM_BOUNDARY",
+            entrada
+        )
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private fun listFiles(): List<File> {
@@ -127,6 +183,12 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
 
     companion object {
         const val MIME_JSON = "application/json"
+
+        // ~6-7 fps: fluido para encuadrar sin saturar la radio 2.4 GHz que
+        // el WiFi comparte con el enlace BT del teléfono.
+        private const val STREAM_FRAME_MILLIS = 150L
+        private const val STREAM_BOUNDARY = "falconframe"
+        private const val STREAM_PIPE_BYTES = 128 * 1024
 
         @Volatile private var instance: FileServerService? = null
 

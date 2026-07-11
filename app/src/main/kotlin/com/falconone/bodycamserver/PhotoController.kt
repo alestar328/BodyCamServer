@@ -1,6 +1,7 @@
 package com.falconone.bodycamserver
 
 import android.content.Context
+import android.graphics.SurfaceTexture
 import android.hardware.Camera
 import android.os.Environment
 import android.util.Log
@@ -8,6 +9,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "FalconPhoto"
 
@@ -20,8 +23,9 @@ object PhotoController {
         }
         TorchController.release()
 
+        var camera: Camera? = null
         return try {
-            val camera = Camera.open(0)
+            camera = Camera.open(0)
             val params = camera.parameters
 
             val sizes = params.supportedPictureSizes
@@ -31,11 +35,24 @@ object PhotoController {
             }
             params.jpegQuality = 90
             camera.parameters = params
+
+            // El HAL (UNISOC) exige una preview realmente activa antes de
+            // takePicture; sin surface asignada la preview no arranca y
+            // takePicture lanza RuntimeException.
+            camera.setPreviewTexture(SurfaceTexture(0))
             camera.startPreview()
 
-            camera.takePicture(null, null) { data, _ ->
-                camera.stopPreview()
-                camera.release()
+            // Esperar el primer frame confirma que la preview esta viva.
+            val firstFrame = CountDownLatch(1)
+            camera.setOneShotPreviewCallback { _, _ -> firstFrame.countDown() }
+            if (!firstFrame.await(2, TimeUnit.SECONDS)) {
+                Log.w(TAG, "Preview frame timeout — trying takePicture anyway")
+            }
+
+            val cam = camera
+            cam.takePicture(null, null) { data, _ ->
+                cam.stopPreview()
+                cam.release()
                 if (data != null) {
                     saveAndUpload(context, data)
                 } else {
@@ -45,11 +62,16 @@ object PhotoController {
             true
         } catch (e: Exception) {
             Log.e(TAG, "takePhoto failed: ${e.message}")
+            // Sin esto la camara queda abierta y todos los intentos
+            // siguientes fallan hasta reiniciar la app.
+            try { camera?.release() } catch (_: Exception) {}
             false
         }
     }
 
-    private fun saveAndUpload(context: Context, data: ByteArray) {
+    // Tambien la usa PreviewController: la foto del visor sigue el mismo
+    // camino de guardado y auto-upload que la foto a ciegas.
+    fun saveAndUpload(context: Context, data: ByteArray) {
         try {
             val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val dir = File(Environment.getExternalStorageDirectory(), "FalconOne").also { it.mkdirs() }

@@ -16,6 +16,8 @@ object Cmd {
     const val PING         = "PING"
     const val STREAM_START = "STREAM_START" // inicia livestream Agora (requiere WiFi)
     const val STREAM_STOP  = "STREAM_STOP"  // detiene livestream Agora
+    const val PREVIEW_START = "PREVIEW_START" // visor remoto: frames JPEG en GET /preview (WiFi)
+    const val PREVIEW_STOP  = "PREVIEW_STOP"
 }
 
 const val FILE_SERVER_PORT = 8080
@@ -43,6 +45,6 @@ object Rsp {
     fun ok(cmd: String) = "OK:$cmd\n"
     fun error(msg: String) = "ERROR:$msg\n"
     fun pong() = "PONG\n"
-    fun status(recording: Boolean, battery: Int, storage: Long, wifi: Boolean, api: Boolean, ip: String = "", streaming: Boolean = false) =
-        "STATUS:{\"recording\":$recording,\"battery\":$battery,\"storage_mb\":$storage,\"wifi\":$wifi,\"api\":$api,\"file_server_ip\":\"$ip\",\"file_server_port\":$FILE_SERVER_PORT,\"streaming\":$streaming,\"stream_uid\":$BODYCAM_UID,\"stream_channel\":\"$AGORA_CHANNEL\"}\n"
+    fun status(recording: Boolean, battery: Int, storage: Long, wifi: Boolean, api: Boolean, ip: String = "", streaming: Boolean = false, preview: Boolean = false) =
+        "STATUS:{\"recording\":$recording,\"battery\":$battery,\"storage_mb\":$storage,\"wifi\":$wifi,\"api\":$api,\"file_server_ip\":\"$ip\",\"file_server_port\":$FILE_SERVER_PORT,\"streaming\":$streaming,\"stream_uid\":$BODYCAM_UID,\"stream_channel\":\"$AGORA_CHANNEL\",\"preview\":$preview}\n"
 }
