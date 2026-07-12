@@ -106,10 +106,19 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
         return jsonResponse(obj.toString())
     }
 
-    // GET /preview — último frame JPEG del visor remoto (PREVIEW_START por BT).
+    // Fuente viva de frames: el visor de foto (PREVIEW_START) o, si se está
+    // grabando, el monitor de RecordingActivity. Nunca están activos a la vez
+    // (la cámara es exclusiva), así que el orden solo resuelve el desempate.
+    private fun liveJpeg(): ByteArray? =
+        PreviewController.latestJpeg() ?: RecordingActivity.latestJpeg()
+
+    private fun liveSourceActive(): Boolean =
+        PreviewController.isActive || RecordingActivity.isRecording
+
+    // GET /preview — último frame JPEG del visor remoto o de la grabación.
     // Un solo frame; útil para diagnóstico con curl. La app usa /preview/stream.
     private fun handlePreview(): Response {
-        val jpeg = PreviewController.latestJpeg()
+        val jpeg = liveJpeg()
             ?: return newFixedLengthResponse(
                 Response.Status.NOT_FOUND, MIME_JSON,
                 """{"error":"Preview not active"}""" as String
@@ -125,7 +134,7 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
     // Termina solo cuando el visor se apaga o el cliente corta la conexión
     // (la escritura falla y el hilo muere).
     private fun handlePreviewStream(): Response {
-        if (!PreviewController.isActive) {
+        if (!liveSourceActive()) {
             return newFixedLengthResponse(
                 Response.Status.NOT_FOUND, MIME_JSON,
                 """{"error":"Preview not active"}""" as String
@@ -135,8 +144,14 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
         val salida = java.io.PipedOutputStream(entrada)
         Thread {
             try {
-                while (PreviewController.isActive) {
-                    val jpeg = PreviewController.latestJpeg() ?: break
+                while (liveSourceActive()) {
+                    // Sin frame todavía (la grabación acaba de arrancar): se
+                    // espera al siguiente tick en vez de cortar el stream.
+                    val jpeg = liveJpeg()
+                    if (jpeg == null) {
+                        Thread.sleep(STREAM_FRAME_MILLIS)
+                        continue
+                    }
                     salida.write(
                         ("--$STREAM_BOUNDARY\r\n" +
                             "Content-Type: image/jpeg\r\n" +

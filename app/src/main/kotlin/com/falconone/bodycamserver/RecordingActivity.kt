@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
@@ -17,11 +18,13 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.WindowManager
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -36,6 +39,20 @@ class RecordingActivity : Activity() {
 
         @Volatile var isRecording = false
             private set
+
+        // Monitor remoto de la grabación: último frame del preview como JPEG,
+        // servido por FileServerService en /preview y /preview/stream mientras
+        // se graba. Se alimenta copiando el TextureView de esta activity — sin
+        // abrir un tercer stream de cámara, que este HAL no garantiza.
+        @Volatile private var monitorJpeg: ByteArray? = null
+
+        /** Frame para el monitor remoto, o null si no se está grabando. */
+        fun latestJpeg(): ByteArray? = if (isRecording) monitorJpeg else null
+
+        private const val MONITOR_FRAME_MILLIS = 250L
+        private const val MONITOR_WIDTH = 640
+        private const val MONITOR_HEIGHT = 360
+        private const val MONITOR_JPEG_QUALITY = 60
 
         fun start(context: Context) {
             context.startActivity(
@@ -63,6 +80,32 @@ class RecordingActivity : Activity() {
     private val stopReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_STOP) stopAndFinish()
+        }
+    }
+
+    // Bucle del monitor remoto: cada tick copia el preview del TextureView a
+    // un bitmap reutilizable (getBitmap exige el hilo de UI) y lo comprime a
+    // JPEG para que el teléfono lo vea mientras se graba. ~4 fps es suficiente
+    // para monitorear sin robarle CPU al encoder de video.
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var monitorBitmap: Bitmap? = null
+    private val monitorTick = object : Runnable {
+        override fun run() {
+            if (!isRecording) return
+            if (textureView.isAvailable) {
+                try {
+                    val bmp = monitorBitmap ?: Bitmap.createBitmap(
+                        MONITOR_WIDTH, MONITOR_HEIGHT, Bitmap.Config.ARGB_8888
+                    ).also { monitorBitmap = it }
+                    textureView.getBitmap(bmp)
+                    val out = ByteArrayOutputStream()
+                    bmp.compress(Bitmap.CompressFormat.JPEG, MONITOR_JPEG_QUALITY, out)
+                    monitorJpeg = out.toByteArray()
+                } catch (e: Exception) {
+                    Log.w(TAG, "monitor frame failed: ${e.message}")
+                }
+            }
+            mainHandler.postDelayed(this, MONITOR_FRAME_MILLIS)
         }
     }
 
@@ -154,6 +197,7 @@ class RecordingActivity : Activity() {
                                         recorder.start()
                                         mediaRecorder = recorder
                                         isRecording = true
+                                        mainHandler.post(monitorTick)
                                         HardwareController.ledRedBlink()
                                         Log.d(TAG, "Recording STARTED — ${file.name}")
                                     } catch (e: Exception) {
@@ -205,6 +249,8 @@ class RecordingActivity : Activity() {
         if (!isRecording) { finish(); return }
         Log.d(TAG, "stopAndFinish")
         isRecording = false
+        mainHandler.removeCallbacks(monitorTick)
+        monitorJpeg = null
         try { captureSession?.stopRepeating() } catch (_: Exception) {}
         try { captureSession?.close() } catch (_: Exception) {}
         captureSession = null
@@ -241,6 +287,8 @@ class RecordingActivity : Activity() {
 
     override fun onDestroy() {
         isRecording = false
+        mainHandler.removeCallbacks(monitorTick)
+        monitorJpeg = null
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
         // Ensure resources freed even if stopAndFinish wasn't called
         try { captureSession?.close() } catch (_: Exception) {}
