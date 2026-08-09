@@ -18,8 +18,9 @@ object TorchController {
     private var camera: Camera? = null
 
     fun turnOn(): Boolean {
-        if (RecordingActivity.isRecording) {
-            Log.w(TAG, "Cannot open torch while recording (Camera2 holds hardware)")
+        // Armado ya ocupa la cámara aunque no haya incidente en curso.
+        if (RecordingActivity.isHoldingCamera) {
+            Log.w(TAG, "Cannot open torch while capture is active (Camera2 holds hardware)")
             return false
         }
         return try {

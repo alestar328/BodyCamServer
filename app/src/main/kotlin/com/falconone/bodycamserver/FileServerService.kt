@@ -30,6 +30,12 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
                 val filename = uri.removePrefix("/recordings/")
                 handleDownload(filename)
             }
+            uri == "/incidents"         -> handleIncidentList()
+            uri.startsWith("/incidents/") -> {
+                val rest = uri.removePrefix("/incidents/")
+                if (rest.contains('/')) handleDownload(rest.substringAfterLast('/'))
+                else handleIncident(rest)
+            }
             uri == "/status"            -> handleStatus()
             uri == "/preview"           -> handlePreview()
             uri == "/preview/stream"    -> handlePreviewStream()
@@ -41,58 +47,113 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
     }
 
     // GET /recordings
-    // Returns JSON array of all recordings sorted newest first
+    // Lista plana de ficheros descargables, más reciente primero. El anillo
+    // pre-evento nunca se expone: es material descartable, no evidencia.
     private fun handleList(): Response {
-        val files = listFiles()
         val arr = JSONArray()
-        files.forEach { f ->
+        listFiles().forEach { arr.put(describe(it)) }
+        return jsonResponse(arr.toString())
+    }
+
+    // GET /recordings/latest
+    private fun handleLatest(): Response {
+        val latest = listFiles().firstOrNull()
+            ?: return notFound("No recordings found")
+        return jsonResponse(describe(latest).toString())
+    }
+
+    // GET /incidents — incidentes agrupados, con su manifest
+    private fun handleIncidentList(): Response {
+        val arr = JSONArray()
+        EvidenceStore.incidentIds().forEach { id ->
+            val segments = EvidenceStore.incidentSegments(id)
             arr.put(JSONObject().apply {
-                put("filename", f.name)
-                put("size_bytes", f.length())
-                put("size_mb", String.format("%.2f", f.length() / 1_048_576.0))
-                put("type", if (f.name.endsWith(".jpg")) "photo" else "video")
-                put("created_at", isoDate(f.lastModified()))
-                put("url", "/recordings/${f.name}")
+                put("incident_id", id)
+                put("segment_count", segments.size)
+                put("size_bytes", segments.sumOf { it.length() })
+                put("size_mb", String.format("%.2f", segments.sumOf { it.length() } / 1_048_576.0))
+                put("has_manifest", EvidenceStore.manifestOf(id) != null)
+                put("url", "/incidents/$id")
             })
         }
         return jsonResponse(arr.toString())
     }
 
-    // GET /recordings/latest
-    // Returns metadata of the most recently created file
-    private fun handleLatest(): Response {
-        val latest = listFiles().firstOrNull()
-            ?: return newFixedLengthResponse(
-                Response.Status.NOT_FOUND, MIME_JSON,
-                """{"error":"No recordings found"}""" as String
-            )
-        val obj = JSONObject().apply {
-            put("filename", latest.name)
-            put("size_bytes", latest.length())
-            put("size_mb", String.format("%.2f", latest.length() / 1_048_576.0))
-            put("type", if (latest.name.endsWith(".jpg")) "photo" else "video")
-            put("created_at", isoDate(latest.lastModified()))
-            put("url", "/recordings/${latest.name}")
+    // GET /incidents/{id} — manifest completo si existe, o los segmentos tal cual
+    private fun handleIncident(incidentId: String): Response {
+        val segments = EvidenceStore.incidentSegments(incidentId)
+        if (segments.isEmpty()) return notFound("Incident not found")
+
+        EvidenceStore.manifestOf(incidentId)?.let { manifest ->
+            return try {
+                jsonResponse(manifest.readText())
+            } catch (e: Exception) {
+                Log.w(TAG, "manifest ilegible de $incidentId: ${e.message}")
+                jsonResponse(fallbackIncident(incidentId, segments).toString())
+            }
         }
-        return jsonResponse(obj.toString())
+        // Sin manifest: incidente cortado a medias (batería, cierre forzado).
+        // Se sirve igualmente para no dejar la evidencia inaccesible.
+        return jsonResponse(fallbackIncident(incidentId, segments).toString())
     }
 
-    // GET /recordings/{filename}
-    // Streams the file binary — supports range requests for video seeking
-    private fun handleDownload(filename: String): Response {
-        val file = File(recordingsDir, filename)
-        if (!file.exists() || !file.canonicalPath.startsWith(recordingsDir.canonicalPath)) {
-            return newFixedLengthResponse(
-                Response.Status.NOT_FOUND, MIME_JSON,
-                """{"error":"File not found"}""" as String
-            )
+    private fun fallbackIncident(incidentId: String, segments: List<File>): JSONObject {
+        val arr = JSONArray()
+        segments.forEachIndexed { i, seg ->
+            arr.put(describe(seg).apply { put("index", i) })
         }
+        return JSONObject().apply {
+            put("incident_id", incidentId)
+            put("segment_count", segments.size)
+            put("incomplete", true)
+            put("segments", arr)
+        }
+    }
+
+    // GET /recordings/{filename} | /incidents/{id}/{filename}
+    private fun handleDownload(filename: String): Response {
+        val file = resolve(filename) ?: return notFound("File not found")
         val mime = if (filename.endsWith(".jpg")) "image/jpeg" else "video/mp4"
         Log.d(TAG, "Serving ${file.name} (${file.length() / 1024}KB)")
         return newFixedLengthResponse(
             Response.Status.OK, mime, FileInputStream(file) as java.io.InputStream, file.length()
         )
     }
+
+    /**
+     * Localiza un fichero descargable por nombre. Los segmentos llevan el
+     * instante de inicio en el nombre, así que son únicos entre incidentes.
+     * Se comprueba la ruta canónica para que un nombre con ".." no salga del
+     * árbol, y el anillo queda fuera del alcance por no mirarse nunca.
+     */
+    private fun resolve(filename: String): File? {
+        val candidates = mutableListOf(File(recordingsDir, filename))
+        EvidenceStore.incidentIds().forEach {
+            candidates += File(EvidenceStore.incidentDir(it), filename)
+        }
+        val rootPath = recordingsDir.canonicalPath
+        return candidates.firstOrNull { f ->
+            f.isFile && f.canonicalPath.startsWith(rootPath) &&
+                !f.canonicalPath.startsWith(EvidenceStore.bufferDir.canonicalPath)
+        }
+    }
+
+    private fun describe(f: File) = JSONObject().apply {
+        put("filename", f.name)
+        put("size_bytes", f.length())
+        put("size_mb", String.format("%.2f", f.length() / 1_048_576.0))
+        put("type", if (f.name.endsWith(".jpg")) "photo" else "video")
+        put("created_at", isoDate(f.lastModified()))
+        put("url", "/recordings/${f.name}")
+        // El teléfono ignora estas claves; están para poder reagrupar segmentos.
+        f.parentFile?.takeIf { it.parentFile == EvidenceStore.incidentsDir }?.let {
+            put("incident_id", it.name)
+        }
+    }
+
+    private fun notFound(msg: String): Response = newFixedLengthResponse(
+        Response.Status.NOT_FOUND, MIME_JSON, """{"error":"$msg"}""" as String
+    )
 
     // GET /status  — quick health check
     private fun handleStatus(): Response {
@@ -112,8 +173,10 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
     private fun liveJpeg(): ByteArray? =
         PreviewController.latestJpeg() ?: RecordingActivity.latestJpeg()
 
+    // isHoldingCamera y no isRecording: con el servicio armado la cámara ya está
+    // abierta, y el teléfono puede encuadrar antes de que haya incidente.
     private fun liveSourceActive(): Boolean =
-        PreviewController.isActive || RecordingActivity.isRecording
+        PreviewController.isActive || RecordingActivity.isHoldingCamera
 
     // GET /preview — último frame JPEG del visor remoto o de la grabación.
     // Un solo frame; útil para diagnóstico con curl. La app usa /preview/stream.
@@ -177,11 +240,17 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    /**
+     * Todo lo descargable: ficheros del modelo anterior en la raíz, más los
+     * segmentos de cada incidente. El anillo se excluye deliberadamente — se
+     * borra solo y no debe llegar ni al teléfono ni al repositorio.
+     */
     private fun listFiles(): List<File> {
         if (!recordingsDir.exists()) return emptyList()
-        return recordingsDir.listFiles { f ->
-            f.isFile && (f.name.endsWith(".mp4") || f.name.endsWith(".jpg"))
-        }?.sortedByDescending { it.lastModified() } ?: emptyList()
+        val incidentSegments = EvidenceStore.incidentIds()
+            .flatMap { EvidenceStore.incidentSegments(it) }
+        return (EvidenceStore.legacyFiles() + incidentSegments)
+            .sortedByDescending { it.lastModified() }
     }
 
     private fun isoDate(ms: Long): String =

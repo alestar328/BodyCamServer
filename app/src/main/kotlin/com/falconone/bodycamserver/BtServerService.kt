@@ -141,10 +141,7 @@ class BtServerService : Service() {
                         LivestreamService.stop()
                         send(Ntf.STREAM_STOP)
                     } else {
-                        if (RecordingActivity.isRecording) {
-                            RecordingActivity.stop(context)
-                            Thread.sleep(500)
-                        }
+                        // LivestreamService cede la cámara y rearma al terminar.
                         PreviewController.stop()
                         Log.d(TAG, "SideKey F3 → STREAM START")
                         val ok = LivestreamService.start(context)
@@ -226,7 +223,8 @@ class BtServerService : Service() {
         connectivityHandler.removeCallbacks(connectivityChecker)
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(smokeKeyReceiver) } catch (_: Exception) {}
-        if (RecordingActivity.isRecording) RecordingActivity.stop(this)
+        // Desarmar del todo: disarm sella el incidente en curso si lo hay.
+        if (RecordingActivity.isHoldingCamera) RecordingActivity.disarm(this)
         connectedClient = null
         closeConnections()
         if (wifiLock.isHeld) wifiLock.release()
@@ -346,9 +344,26 @@ class BtServerService : Service() {
                 if (ok) Rsp.ok(Cmd.PHOTO) else Rsp.error("Photo failed: recording active or camera error")
             }
 
+            Cmd.SERVICE_START -> {
+                if (RecordingActivity.isHoldingCamera) {
+                    Rsp.error("El servicio ya está activo")
+                } else {
+                    TorchController.release()
+                    PreviewController.stop()
+                    RecordingActivity.arm(applicationContext)
+                    Rsp.ok(Cmd.SERVICE_START)
+                }
+            }
+
+            Cmd.SERVICE_STOP -> {
+                RecordingActivity.disarm(applicationContext)
+                Rsp.ok(Cmd.SERVICE_STOP)
+            }
+
             Cmd.PREVIEW_START -> {
-                if (RecordingActivity.isRecording) {
-                    Rsp.error("Grabando — el visor no está disponible")
+                if (RecordingActivity.isHoldingCamera) {
+                    // El monitor de la sesión de captura ya sirve /preview/stream.
+                    Rsp.error("Captura activa — usa el monitor de la grabación")
                 } else if (LivestreamService.isStreaming) {
                     Rsp.error("Livestream activo — el visor no está disponible")
                 } else if (!cachedWifiOk) {
@@ -372,17 +387,16 @@ class BtServerService : Service() {
                 cachedApiOk,
                 getWifiIp(),
                 LivestreamService.isStreaming,
-                PreviewController.isActive
+                PreviewController.isActive,
+                RecordingActivity.serviceRequested,
+                RecordingActivity.state.name
             )
 
             Cmd.STREAM_START -> {
                 if (!cachedWifiOk) {
                     Rsp.error("Sin WiFi — livestream requiere conexión a internet")
                 } else {
-                    if (RecordingActivity.isRecording) {
-                        RecordingActivity.stop(applicationContext)
-                        Thread.sleep(500) // espera que Camera2 libere la cámara
-                    }
+                    // LivestreamService cede la cámara y rearma al terminar.
                     PreviewController.stop() // Agora necesita la cámara para sí
                     val ok = LivestreamService.start(applicationContext)
                     if (ok) Rsp.ok(Cmd.STREAM_START) else Rsp.error("Agora no pudo iniciar")

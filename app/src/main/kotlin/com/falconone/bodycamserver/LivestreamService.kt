@@ -27,10 +27,45 @@ object LivestreamService {
 
     private var engine: RtcEngine? = null
 
+    /** Contexto de aplicación, para poder rearmar el servicio al cerrar el stream. */
+    private var appContext: Context? = null
+
+    /** El servicio de grabación continua estaba armado cuando el SOS tomó la cámara. */
+    private var resumeServiceAfter = false
+
+    /**
+     * El SOS tiene prioridad sobre la grabación: Agora abre la cámara por su
+     * cuenta y el HAL no da para las dos cosas a la vez. Se cede la cámara, se
+     * emite, y al terminar se rearma el anillo si estaba armado.
+     *
+     * Durante la emisión hay un hueco en el buffer pre-evento, pero lo que ocurre
+     * en ese hueco se está transmitiendo en directo: la evidencia no se pierde,
+     * cambia de sitio.
+     */
+    private fun yieldCamera(context: Context) {
+        if (!RecordingActivity.isHoldingCamera) {
+            resumeServiceAfter = false
+            return
+        }
+        // Leer la intención del agente ANTES de desarmar: disarm() la borra.
+        resumeServiceAfter = RecordingActivity.serviceRequested
+        Log.d(TAG, "Cediendo cámara al livestream (rearmar después: $resumeServiceAfter)")
+        RecordingActivity.disarm(context)
+
+        // Esperar a que el HAL suelte de verdad, en vez de dormir a ciegas.
+        val deadline = System.currentTimeMillis() + 3_000
+        while (RecordingActivity.isHoldingCamera && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50)
+        }
+        if (RecordingActivity.isHoldingCamera) {
+            Log.w(TAG, "La cámara sigue ocupada tras 3 s — se intenta emitir igualmente")
+        }
+    }
+
     fun start(context: Context): Boolean {
         if (isStreaming) return true
-        // Camera2 is in use — can't stream and record simultaneously
-        if (RecordingActivity.isRecording) return false
+        appContext = context.applicationContext
+        yieldCamera(context)
 
         return try {
             val handler = object : IRtcEngineEventHandler() {
@@ -118,6 +153,15 @@ object LivestreamService {
             _micEnabled = false
             HardwareController.ledGreen()
             Log.d(TAG, "Livestream stopped")
+
+            // Devolver la cámara al anillo si el agente tenía el servicio activo.
+            if (resumeServiceAfter) {
+                resumeServiceAfter = false
+                appContext?.let {
+                    Log.d(TAG, "Rearmando el servicio de grabación continua")
+                    RecordingActivity.arm(it)
+                }
+            }
         }
     }
 }

@@ -23,6 +23,7 @@ import android.widget.TextView
 class MainActivity : Activity() {
 
     private lateinit var statusText: TextView
+    private lateinit var btnService: Button
     private lateinit var btnRecord: Button
     private lateinit var btnStream: Button
     private lateinit var btStatusText: TextView
@@ -33,6 +34,7 @@ class MainActivity : Activity() {
     // Refresh UI every second to reflect recording/streaming/BT state changes
     private val uiRefresher = object : Runnable {
         override fun run() {
+            updateServiceButton()
             updateRecordButton()
             updateStreamButton()
             updateSosWarning()
@@ -65,6 +67,7 @@ class MainActivity : Activity() {
     // Listen for recording state changes from BtServerService commands
     private val recordingReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            updateServiceButton()
             updateRecordButton()
             updateStreamButton()
             updateSosWarning()
@@ -155,6 +158,21 @@ class MainActivity : Activity() {
 
         root.addView(spacer(16))
 
+        // ── Servicio de grabación continua ────────────────────────────────────
+        // Armado = la cámara queda abierta y el anillo pre-evento va rotando. Sin
+        // esto, pulsar grabar sigue funcionando pero el incidente empieza en seco,
+        // sin los dos minutos previos.
+        btnService = Button(this).apply {
+            textSize = 15f
+            setTypeface(null, Typeface.BOLD)
+            setOnClickListener { toggleService() }
+        }
+        root.addView(btnService, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 120
+        ))
+
+        root.addView(spacer(10))
+
         // ── Indicador grabación ───────────────────────────────────────────────
         btnRecord = Button(this).apply {
             textSize = 15f
@@ -190,7 +208,11 @@ class MainActivity : Activity() {
         requestPermissions()
         if (allPermissionsGranted()) startServer()
 
-        registerReceiver(recordingReceiver, IntentFilter(RecordingActivity.ACTION_STOP))
+        registerReceiver(recordingReceiver, IntentFilter().apply {
+            addAction(RecordingActivity.ACTION_STOP)
+            addAction(RecordingActivity.ACTION_STATE_CHANGED)
+        })
+        updateServiceButton()
         updateRecordButton()
         updateStreamButton()
         updateSosWarning()
@@ -210,6 +232,48 @@ class MainActivity : Activity() {
         // uiRefresher pinta el estado real (esperando / conectado) cada segundo.
     }
 
+    private fun toggleService() {
+        if (RecordingActivity.serviceRequested) {
+            RecordingActivity.disarm(this)
+        } else {
+            TorchController.release()
+            PreviewController.stop()
+            RecordingActivity.arm(this)
+        }
+        updateServiceButton()
+    }
+
+    private fun updateServiceButton() {
+        val error = RecordingActivity.lastError
+        when {
+            error != null -> {
+                btnService.text = "⚠  Captura detenida\n$error"
+                btnService.setBackgroundColor(Color.parseColor("#8e44ad"))
+                btnService.setTextColor(Color.WHITE)
+            }
+            RecordingActivity.state == CaptureState.RECORDING -> {
+                btnService.text = "●  Servicio activo — grabando"
+                btnService.setBackgroundColor(Color.parseColor("#17604a"))
+                btnService.setTextColor(Color.WHITE)
+            }
+            RecordingActivity.state == CaptureState.ARMED -> {
+                btnService.text = "◉  Servicio activo\nBuffer de 2 min listo"
+                btnService.setBackgroundColor(Color.parseColor("#1e8449"))
+                btnService.setTextColor(Color.WHITE)
+            }
+            RecordingActivity.serviceRequested -> {
+                btnService.text = "◌  Iniciando servicio…"
+                btnService.setBackgroundColor(Color.parseColor("#2c3e50"))
+                btnService.setTextColor(Color.WHITE)
+            }
+            else -> {
+                btnService.text = "▶  Iniciar servicio"
+                btnService.setBackgroundColor(Color.parseColor("#2c3e50"))
+                btnService.setTextColor(Color.parseColor("#aaaaaa"))
+            }
+        }
+    }
+
     private fun toggleRecording() {
         if (RecordingActivity.isRecording) {
             RecordingActivity.stop(this)
@@ -221,11 +285,13 @@ class MainActivity : Activity() {
 
     private fun updateRecordButton() {
         if (RecordingActivity.isRecording) {
-            btnRecord.text = "⏹  Grabando…"
+            btnRecord.text = "⏹  Grabando incidente…"
             btnRecord.setBackgroundColor(Color.parseColor("#c0392b"))
             btnRecord.setTextColor(Color.WHITE)
         } else {
-            btnRecord.text = "⏺  Iniciar grabación"
+            // Con el servicio armado, grabar arranca con los 2 min previos ya en mano.
+            btnRecord.text = if (RecordingActivity.state == CaptureState.ARMED)
+                "⏺  Grabar (con 2 min previos)" else "⏺  Iniciar grabación"
             btnRecord.setBackgroundColor(Color.parseColor("#2c3e50"))
             btnRecord.setTextColor(Color.parseColor("#aaaaaa"))
         }
@@ -271,7 +337,7 @@ class MainActivity : Activity() {
             LivestreamService.stop()
             updateStreamButton()  // immediate
         } else {
-            if (RecordingActivity.isRecording) RecordingActivity.stop(this)
+            // LivestreamService cede la cámara por su cuenta (y rearma al terminar).
             // Immediate "connecting" feedback before Agora confirms join
             btnStream.text = "📡  Conectando livestream…"
             btnStream.setBackgroundColor(Color.parseColor("#1565c0"))
