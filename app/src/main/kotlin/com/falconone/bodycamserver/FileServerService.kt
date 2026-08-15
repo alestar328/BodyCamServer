@@ -31,6 +31,7 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
                 handleDownload(filename)
             }
             uri == "/status"            -> handleStatus()
+            uri == "/benchmark"         -> handleBenchmark(session)
             uri == "/preview"           -> handlePreview()
             uri == "/preview/stream"    -> handlePreviewStream()
             else -> newFixedLengthResponse(
@@ -92,6 +93,34 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
         return newFixedLengthResponse(
             Response.Status.OK, mime, FileInputStream(file) as java.io.InputStream, file.length()
         )
+    }
+
+    /**
+     * GET /benchmark[?file=<nombre>][&repeats=N] — coste de hashear y cifrar en
+     * esta unidad. Sin parámetro mide sobre el segmento más reciente.
+     *
+     * Es una herramienta de medición, no parte del producto: no la llama nadie
+     * y se quita borrando esta función, su línea en serve() y CryptoBenchmark.kt.
+     */
+    private fun handleBenchmark(session: IHTTPSession): Response {
+        val name = session.parameters["file"]?.firstOrNull()
+        val repeats = session.parameters["repeats"]?.firstOrNull()?.toIntOrNull()?.coerceIn(1, 10) ?: 3
+
+        val target = if (name != null) resolve(name)
+                     else listFiles().firstOrNull { it.name.endsWith(".mp4") }
+        if (target == null || !target.isFile) {
+            return notFound(if (name != null) "File not found" else "No hay ningún .mp4 sobre el que medir")
+        }
+
+        return try {
+            jsonResponse(CryptoBenchmark.run(target, repeats).toString(2))
+        } catch (e: Exception) {
+            Log.e(TAG, "benchmark falló: ${e.message}")
+            newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON,
+                """{"error":"benchmark failed","detail":"${e.message}"}""" as String
+            )
+        }
     }
 
     // GET /status  — quick health check
@@ -183,6 +212,25 @@ class FileServerService : NanoHTTPD(FILE_SERVER_PORT) {
             f.isFile && (f.name.endsWith(".mp4") || f.name.endsWith(".jpg"))
         }?.sortedByDescending { it.lastModified() } ?: emptyList()
     }
+
+    /**
+     * Ruta dentro de FalconOne/ a partir de un nombre recibido por HTTP.
+     *
+     * Devuelve null si el nombre se sale del directorio: sin esta comprobación
+     * un "../../" en la URL serviría cualquier fichero del almacenamiento.
+     */
+    private fun resolve(name: String): File? {
+        val file = File(recordingsDir, name)
+        val root = recordingsDir.canonicalPath
+        val path = file.canonicalPath
+        return if (path == root || path.startsWith(root + File.separator)) file else null
+    }
+
+    private fun notFound(message: String) =
+        newFixedLengthResponse(
+            Response.Status.NOT_FOUND, MIME_JSON,
+            """{"error":"$message"}""" as String
+        )
 
     private fun isoDate(ms: Long): String =
         SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date(ms))

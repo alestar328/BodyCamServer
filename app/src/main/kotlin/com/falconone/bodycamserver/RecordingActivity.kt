@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
+import android.graphics.Typeface
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraCaptureSession
@@ -19,11 +21,17 @@ import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
+import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
@@ -77,6 +85,32 @@ class RecordingActivity : Activity() {
     private var outputFile: File? = null
     private var sensorOrientation = 0
 
+    /** Instrumentación de la prueba de cifrado — ver RecorderWatch. */
+    private var watch: RecorderWatch? = null
+
+    // ── Pantalla en reposo ───────────────────────────────────────────────────
+    // Al empezar a grabar la pantalla se apaga y un toque la alterna. La
+    // grabación no depende de esto: sigue igual con la pantalla negra.
+    //
+    // "Apagar" aquí es bajar el brillo a cero y tapar la vista con una capa
+    // opaca, no dormir el panel: Android no deja apagarlo de verdad sin
+    // permisos de administrador de dispositivo, y por esa vía el despertar
+    // pasaría por la pantalla de bloqueo, que es justo lo que no queremos en
+    // una bodycam. Así el táctil sigue vivo y un toque devuelve la imagen al
+    // instante.
+    private lateinit var elapsedLabel: TextView
+    private lateinit var screenCover: View
+    private var screenAwake = true
+
+    /**
+     * Origen del contador, en reloj monótono.
+     *
+     * elapsedRealtime() y no currentTimeMillis() porque el segundo salta si la
+     * unidad sincroniza la hora por red a mitad de grabación, y el contador
+     * daría un salto o se iría hacia atrás.
+     */
+    private var recordingStartElapsed = 0L
+
     private val stopReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_STOP) stopAndFinish()
@@ -109,9 +143,64 @@ class RecordingActivity : Activity() {
         }
     }
 
+    // Contador de grabación. Solo corre con la pantalla despierta: con la capa
+    // puesta nadie lo lee, y el origen es un instante fijo, así que al volver
+    // muestra el valor correcto sin haber ido contando.
+    private val elapsedTick = object : Runnable {
+        override fun run() {
+            if (!isRecording) return
+            updateElapsedLabel()
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun updateElapsedLabel() {
+        val millis = SystemClock.elapsedRealtime() - recordingStartElapsed
+        val total = (millis / 1000).coerceAtLeast(0)
+        elapsedLabel.text = String.format(
+            Locale.US, "● REC  %02d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60
+        )
+    }
+
+    /**
+     * Alterna entre la pantalla en reposo y el preview con el contador.
+     *
+     * El TextureView se queda como está, tapado por la capa: si se ocultara,
+     * el monitor remoto (/preview) dejaría de tener frames que copiar, porque
+     * se alimenta justamente de esta vista.
+     */
+    private fun setScreenAwake(awake: Boolean) {
+        screenAwake = awake
+        screenCover.visibility = if (awake) View.GONE else View.VISIBLE
+        elapsedLabel.visibility = if (awake) View.VISIBLE else View.GONE
+
+        window.attributes = window.attributes.apply {
+            screenBrightness =
+                if (awake) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else 0f
+        }
+
+        mainHandler.removeCallbacks(elapsedTick)
+        if (awake && isRecording) {
+            updateElapsedLabel()
+            mainHandler.post(elapsedTick)
+        }
+        Log.d(TAG, "Pantalla ${if (awake) "activa" else "en reposo"}")
+    }
+
+    // Un toque alterna reposo ↔ preview. Se consume aquí porque en esta
+    // pantalla no hay nada más con lo que interactuar, y así el toque que la
+    // despierta no dispara nada de debajo.
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) setScreenAwake(!screenAwake)
+        return true
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // KEEP_SCREEN_ON se mantiene a propósito aun con la pantalla en reposo:
+        // el apagado lo gestionamos nosotros con el brillo, y si dejáramos
+        // dormir el panel al sistema, despertarlo exigiría desbloquear.
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
@@ -120,7 +209,33 @@ class RecordingActivity : Activity() {
 
         // TextureView real — HAL de cámara necesita surface de foreground app
         textureView = TextureView(this)
-        setContentView(textureView)
+
+        elapsedLabel = TextView(this).apply {
+            textSize = 22f
+            setTextColor(Color.parseColor("#ff5555"))
+            typeface = Typeface.MONOSPACE
+            setShadowLayer(6f, 0f, 0f, Color.BLACK)  // legible sobre cualquier escena
+            setPadding(28, 20, 28, 20)
+            text = "● REC  00:00:00"
+        }
+
+        screenCover = View(this).apply {
+            setBackgroundColor(Color.BLACK)
+            visibility = View.GONE
+        }
+
+        val root = FrameLayout(this)
+        root.addView(textureView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        root.addView(elapsedLabel, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.TOP or Gravity.START })
+        // La capa va la última: tapa preview y contador de una vez.
+        root.addView(screenCover, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        setContentView(root)
 
         registerReceiver(stopReceiver, IntentFilter(ACTION_STOP))
 
@@ -156,6 +271,8 @@ class RecordingActivity : Activity() {
             val file = File(dir, "VID_$ts.mp4").also { outputFile = it }
             Log.d(TAG, "Output: ${file.absolutePath}")
 
+            val watch = RecorderWatch(file, cameraHandler).also { this.watch = it }
+
             val recorder = MediaRecorder().apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
@@ -167,6 +284,7 @@ class RecordingActivity : Activity() {
                 setVideoEncodingBitRate(4_000_000)
                 setOrientationHint((sensorOrientation + 270) % 360)  // 90°→0° ajuste bodycam
                 setOutputFile(file.absolutePath)
+                watch.attach(this)
                 prepare()
             }
 
@@ -197,7 +315,14 @@ class RecordingActivity : Activity() {
                                         recorder.start()
                                         mediaRecorder = recorder
                                         isRecording = true
+                                        watch.onStarted()
+                                        // El origen del contador se fija aquí, no al
+                                        // abrir la cámara: entre openCamera() y este
+                                        // punto se van cientos de ms configurando la
+                                        // sesión, y no son grabación.
+                                        recordingStartElapsed = SystemClock.elapsedRealtime()
                                         mainHandler.post(monitorTick)
+                                        mainHandler.post { setScreenAwake(false) }
                                         HardwareController.ledRedBlink()
                                         Log.d(TAG, "Recording STARTED — ${file.name}")
                                     } catch (e: Exception) {
@@ -250,12 +375,14 @@ class RecordingActivity : Activity() {
         Log.d(TAG, "stopAndFinish")
         isRecording = false
         mainHandler.removeCallbacks(monitorTick)
+        mainHandler.removeCallbacks(elapsedTick)
         monitorJpeg = null
         try { captureSession?.stopRepeating() } catch (_: Exception) {}
         try { captureSession?.close() } catch (_: Exception) {}
         captureSession = null
         try {
             mediaRecorder?.stop()
+            watch?.onStopped()   // tras stop() el tamaño del fichero ya es el definitivo
             Log.d(TAG, "File saved: ${outputFile?.name}")
             // Notify gallery so the video appears immediately
             outputFile?.let { file ->
@@ -287,8 +414,20 @@ class RecordingActivity : Activity() {
 
     override fun onDestroy() {
         isRecording = false
+        // Red de seguridad: si stop() lanzó, el latido seguiría vivo sobre un
+        // grabador ya muerto.
+        watch?.onStopped()
+        watch = null
         mainHandler.removeCallbacks(monitorTick)
+        mainHandler.removeCallbacks(elapsedTick)
         monitorJpeg = null
+        // Devolver el brillo: es un ajuste de ventana, pero si la activity se
+        // destruye con la capa puesta conviene no dejar rastro.
+        try {
+            window.attributes = window.attributes.apply {
+                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        } catch (_: Exception) {}
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
         // Ensure resources freed even if stopAndFinish wasn't called
         try { captureSession?.close() } catch (_: Exception) {}

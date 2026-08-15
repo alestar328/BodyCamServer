@@ -36,6 +36,9 @@ class CameraController(private val context: Context) {
 
     @Volatile private var cameraReleased = true
 
+    /** Instrumentación de la prueba de cifrado — ver RecorderWatch. */
+    private var watch: RecorderWatch? = null
+
     private val outputDir: File
         get() {
             val dir = File(Environment.getExternalStorageDirectory(), "FalconOne")
@@ -65,6 +68,8 @@ class CameraController(private val context: Context) {
             val file = File(outputDir, "VID_${timestamp()}.mp4")
             Log.d(TAG, "Output: ${file.absolutePath}")
 
+            val watch = RecorderWatch(file, cameraHandler).also { this.watch = it }
+
             val recorder = MediaRecorder().apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
@@ -75,6 +80,7 @@ class CameraController(private val context: Context) {
                 setVideoFrameRate(30)
                 setVideoEncodingBitRate(4_000_000)
                 setOutputFile(file.absolutePath)
+                watch.attach(this)
                 prepare()
             }
             recorderSurface = recorder.surface
@@ -105,6 +111,7 @@ class CameraController(private val context: Context) {
                                         recorder.start()
                                         mediaRecorder = recorder
                                         isRecording = true
+                                        watch.onStarted()
                                         HardwareController.ledRedBlink()
                                         Log.d(TAG, "Recording STARTED — file: ${file.name}")
                                     } catch (e: Exception) {
@@ -182,6 +189,10 @@ class CameraController(private val context: Context) {
             Log.e(TAG, "recorder.stop failed: ${e.message}")
             false
         } finally {
+            // En el finally y no tras stop(): así también corta el latido cuando
+            // stop() lanza, que es justo el caso que interesa diagnosticar.
+            watch?.onStopped()
+            watch = null
             try { rec.release() } catch (_: Exception) {}
             mediaRecorder = null
             // Register a close callback so we know when hardware is truly free
@@ -205,6 +216,8 @@ class CameraController(private val context: Context) {
 
     private fun releaseAll(recorder: MediaRecorder) {
         isRecording = false
+        watch?.onStopped()
+        watch = null
         try { recorder.release() } catch (_: Exception) {}
         mediaRecorder = null
         val dev = cameraDevice
