@@ -61,7 +61,14 @@ object EvidenceStore {
     private val root: File
         get() = File(Environment.getExternalStorageDirectory(), "FalconOne")
 
-    val bufferDir: File get() = File(root, "buffer").also { it.mkdirs() }
+    val bufferDir: File
+        get() = File(root, "buffer").also {
+            it.mkdirs()
+            // .nomedia: el anillo es mecánica interna, no contenido del usuario.
+            // Sin esto la galería indexaba los SEG_*.mp4 y parecían grabaciones.
+            val nomedia = File(it, ".nomedia")
+            if (!nomedia.exists()) runCatching { nomedia.createNewFile() }
+        }
     val incidentsDir: File get() = File(root, "incidents").also { it.mkdirs() }
 
     // ── Anillo pre-evento ─────────────────────────────────────────────────────

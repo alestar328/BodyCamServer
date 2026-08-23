@@ -44,22 +44,38 @@ object IncidentAssembler {
             Log.w(TAG, "incidente sin segmentos: $incidentId")
             return null
         }
-        // Un solo segmento ya es un único vídeo con el nombre correcto.
-        if (segments.size == 1) return segments[0]
 
         val startMillis = EvidenceStore.startMillisOf(segments.first())
+        val rotation = rotationOf(segments.first())
         // Extensión .tmp mientras se construye: incidentSegments() y el servidor
         // HTTP solo miran .mp4, así que nadie puede listar ni subir un vídeo a
         // medio coser.
         val work = File(EvidenceStore.incidentDir(incidentId), "assembling.tmp")
         work.delete()
 
-        try {
-            remux(segments, work)
+        // Primero el camino completo: coser Y quemar el rótulo del oficial en
+        // los frames (re-encodado por hardware — ver VideoStamper). Pasa también
+        // con un solo segmento: el rótulo va siempre.
+        val stamped = try {
+            VideoStamper.stampAndConcat(segments, work, HardcodedOfficer, rotation)
         } catch (e: Exception) {
-            Log.e(TAG, "ensamblado de $incidentId falló: ${e.message} — se conservan los segmentos")
+            Log.e(TAG, "stamp de $incidentId falló: ${e.message}")
+            false
+        }
+
+        if (!stamped) {
+            // Red de seguridad: remux sin rótulo. La evidencia manda — antes un
+            // vídeo sin rótulo que ningún vídeo.
             work.delete()
-            return null
+            Log.w(TAG, "$incidentId: sin rótulo, se ensambla por remux")
+            if (segments.size == 1) return segments[0]
+            try {
+                remux(segments, work)
+            } catch (e: Exception) {
+                Log.e(TAG, "ensamblado de $incidentId falló: ${e.message} — se conservan los segmentos")
+                work.delete()
+                return null
+            }
         }
 
         // Solo cuando el fichero final está completo se retiran las piezas. El
