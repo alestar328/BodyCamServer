@@ -123,7 +123,7 @@ class MainActivity : ComponentActivity() {
         }
 
         requestPermissions()
-        if (allPermissionsGranted()) startServer()
+        if (allPermissionsGranted()) startService()
 
         registerReceiver(
             recordingReceiver,
@@ -148,10 +148,16 @@ class MainActivity : ComponentActivity() {
 
     // ── Lógica ────────────────────────────────────────────────────────────────
 
-    // El servidor arranca solo y ya no se para desde la pantalla: una bodycam que
-    // se queda sin enlace por un toque accidental no sirve de nada.
-    private fun startServer() {
+    // Todo arranca solo y nada se para desde la pantalla: una bodycam que se
+    // queda sin enlace o sin buffer por un toque accidental no sirve de nada.
+    //
+    // Armar aquí es el requisito de producto (2026-08-23): abrir la app = entrar
+    // en servicio. Desde este momento la unidad guarda los últimos 20 s en el
+    // anillo y cualquier grabación los incluye como pre-roll. RecordingActivity
+    // pasa a primer plano y dibuja este mismo panel sobre su preview.
+    private fun startService() {
         startForegroundService(Intent(this, BtServerService::class.java))
+        RecordingActivity.arm(this)
     }
 
     private fun toggleRecording() {
@@ -228,7 +234,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
-        if (results.all { it == PackageManager.PERMISSION_GRANTED }) startServer()
+        if (results.all { it == PackageManager.PERMISSION_GRANTED }) startService()
     }
 }
 
@@ -347,9 +353,11 @@ private fun LinkRow(state: PanelState) {
 private fun IndicatorRow(state: PanelState) {
     // El punto REC tiene tres estados: rojo grabando, ámbar con el anillo armado
     // (grabación continua sin incidente), apagado en reposo.
+    // Azul armado = el mismo código de color que el LED físico (LedSignals):
+    // buffer activo, listos para grabar con pre-roll.
     val recColor = when {
         state.recording -> RED
-        state.armed     -> AMBER
+        state.armed     -> BLUE
         else            -> DIM
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
