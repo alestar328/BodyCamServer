@@ -232,6 +232,13 @@ object EvidenceStore {
         val manifest = JSONObject().apply {
             put("incident_id", incidentId)
             put("device_model", android.os.Build.MODEL)
+            // Identidad del oficial portador — el "Officer ID" de EVD-002.
+            // TODO: integrar con datos reales — HardcodedOfficer es de demo; cuando
+            // exista la sesión autenticada, la identidad debe llegar como parámetro
+            // desde el emparejamiento, no leerse de una constante.
+            put("officer_name", HardcodedOfficer.name)
+            put("officer_rank", HardcodedOfficer.rank)
+            put("officer_badge", HardcodedOfficer.badge)
             put("armed_at_epoch_ms", armedAtMillis)
             put("trigger_epoch_ms", triggerMillis)
             put("stopped_epoch_ms", stoppedMillis)

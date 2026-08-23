@@ -86,6 +86,7 @@ data class OverlayState(
 // las dimensiones disponibles: se diseña para el mismo cuadrado que MainActivity.
 
 private val ELAPSED_TEXT_SIZE  = 30.dp
+private val OFFICER_TEXT_SIZE  = 16.dp
 private val QUESTION_TEXT_SIZE = 35.dp
 private val FILENAME_TEXT_SIZE = 25.dp
 private val ANSWER_TEXT_SIZE   = 20.dp
@@ -122,6 +123,9 @@ fun RecordingOverlay(
     onAnswer: (Boolean) -> Unit,
     panel: PanelState? = null,
     onSos: () -> Unit = {},
+    // TODO: integrar con datos reales — hoy llega el hardcodeado de Officer.kt;
+    // cuando exista la sesión del oficial, el llamante pasará la identidad real.
+    officer: Officer = HardcodedOfficer,
     rotationDegrees: Float = OVERLAY_ROTATION_DEGREES,
 ) {
     Box(Modifier.fillMaxSize()) {
@@ -135,7 +139,10 @@ fun RecordingOverlay(
 
         state.elapsed?.let { text ->
             Rotated(rotationDegrees) {
-                ElapsedBadge(text, Modifier.align(Alignment.TopStart))
+                Column(Modifier.align(Alignment.TopStart).padding(10.dp)) {
+                    ElapsedBadge(text)
+                    OfficerBadge(officer)
+                }
             }
         }
 
@@ -185,8 +192,42 @@ private fun ElapsedBadge(text: String, modifier: Modifier = Modifier) {
         fontWeight = FontWeight.Bold,
         // Sombra para que se lea sobre cualquier escena que esté grabando.
         style = TextStyle(shadow = Shadow(color = Color.Black, blurRadius = 6f)),
-        modifier = modifier.padding(10.dp),
+        modifier = modifier,
     )
+}
+
+/**
+ * Identidad del oficial bajo el contador. Solo mientras se graba: es contexto
+ * de la evidencia en curso, no decoración del panel.
+ *
+ * OJO: esto se pinta en la PANTALLA, no queda grabado dentro del MP4 — la
+ * cámara escribe directa al encoder sin pasar por esta UI. La identidad que
+ * acompaña de verdad a la evidencia va en el manifest.json del incidente.
+ */
+@Composable
+private fun OfficerBadge(officer: Officer) {
+    val shadow = TextStyle(shadow = Shadow(color = Color.Black, blurRadius = 6f))
+    Column {
+        Text(
+            text = "Officer: ${officer.name}",
+            color = Color.White,
+            fontSize = OFFICER_TEXT_SIZE.asFixedSp(),
+            fontWeight = FontWeight.Bold,
+            style = shadow,
+        )
+        Text(
+            text = "Rank: ${officer.rank}",
+            color = Color.White,
+            fontSize = OFFICER_TEXT_SIZE.asFixedSp(),
+            style = shadow,
+        )
+        Text(
+            text = "Badge: ${officer.badge}",
+            color = Color.White,
+            fontSize = OFFICER_TEXT_SIZE.asFixedSp(),
+            style = shadow,
+        )
+    }
 }
 
 /**
