@@ -268,6 +268,46 @@ class RecordingActivity : ComponentActivity() {
     /** Incidente sobre el que pregunta el prompt. Puede ser distinto del incidente
      *  en curso: al responder, la unidad ya puede estar rearmada o grabando otro. */
     private var promptIncidentId: String? = null
+
+    // ── Finalización de incidentes ────────────────────────────────────────────
+    // Al cerrar, los segmentos se ensamblan en un único MP4 en un hilo propio
+    // (IncidentAssembler). La subida necesita dos cosas que llegan en cualquier
+    // orden: el vídeo terminado y la decisión (Yes/No del prompt, o automática
+    // en paradas del teléfono). Ambos mapas se tocan solo en el hilo principal.
+    private val uploadDecisions = HashMap<String, Boolean>()
+    private val assembledIncidents = HashSet<String>()
+
+    /** Sube el incidente cuando el ensamblado terminó Y hay decisión afirmativa. */
+    private fun maybeUploadAssembled(id: String) {
+        if (id !in assembledIncidents) return
+        val approved = uploadDecisions[id] ?: return
+        assembledIncidents.remove(id)
+        uploadDecisions.remove(id)
+        if (approved) UploadService.startIncident(applicationContext, id)
+        else Log.d(TAG, "$id ensamblado; se queda solo en la unidad")
+    }
+
+    /**
+     * Ensambla el incidente en un hilo propio y, al terminar, escribe el
+     * manifest (ya sobre el vídeo único), lo anuncia a la galería y desbloquea
+     * la subida. Va fuera del hilo principal: coser un incidente largo son
+     * segundos de I/O y el anillo ya está rearmándose por debajo.
+     */
+    private fun finalizeIncidentAsync(id: String, armedAt: Long, trigger: Long, stopped: Long) {
+        Thread {
+            val file = IncidentAssembler.assemble(id)
+            EvidenceStore.writeManifest(id, armedAt, trigger, stopped)
+            file?.let {
+                MediaScannerConnection.scanFile(
+                    applicationContext, arrayOf(it.absolutePath), arrayOf("video/mp4"), null
+                )
+            }
+            mainHandler.post {
+                assembledIncidents.add(id)
+                maybeUploadAssembled(id)
+            }
+        }.start()
+    }
     private var promptDeadline = 0L
 
     /**
@@ -724,37 +764,28 @@ class RecordingActivity : ComponentActivity() {
         // anillo es, por definición, parte de este incidente.
         teardownCapture()
         EvidenceStore.drainBufferInto(id)
-        EvidenceStore.writeManifest(id, armedAtMillis, triggerMillis, stopped)
-
-        val segments = EvidenceStore.incidentSegments(id)
-        Log.d(TAG, "incidente $id cerrado: ${segments.size} segmentos")
-        if (segments.isNotEmpty()) {
-            // Que aparezcan en la galería del dispositivo.
-            MediaScannerConnection.scanFile(
-                applicationContext,
-                segments.map { it.absolutePath }.toTypedArray(),
-                Array(segments.size) { "video/mp4" },
-                null
-            )
-        }
 
         incidentId = null
         state = CaptureState.IDLE
         notifyStateChanged()
 
+        // La decisión de subir y el vídeo terminado llegan en cualquier orden;
+        // maybeUploadAssembled los junta. En paradas del teléfono la decisión
+        // es automática: sí.
         if (askUpload) {
             // La respuesta decide la subida, nunca si se guarda: el incidente ya
-            // está sellado en disco. Mientras se contesta, el servicio se rearma
-            // por debajo — la pregunta flota sobre el preview del anillo.
+            // está sellado en disco. Mientras se contesta, los segmentos se
+            // cosen en un único MP4 y el servicio se rearma por debajo.
             showUploadPrompt(id)
         } else {
-            UploadService.startIncident(applicationContext, id)
+            uploadDecisions[id] = true
         }
+        finalizeIncidentAsync(id, armedAtMillis, triggerMillis, stopped)
 
         if (serviceRequested) {
             mainHandler.post { openCamera() }   // volver a ARMED con anillo limpio
         } else if (!askUpload) {
-            finish()
+            finish()   // el ensamblado y la subida siguen en sus hilos
         }
         // Con askUpload y sin servicio: la activity vive hasta que se responda.
     }
@@ -763,11 +794,12 @@ class RecordingActivity : ComponentActivity() {
         serviceRequested = false
         val id = incidentId
         if (state == CaptureState.RECORDING && id != null) {
-            // Nunca perder un incidente en curso por un apagado.
+            // Nunca perder un incidente en curso por un apagado: se ensambla y
+            // sube igual, en sus hilos, aunque esta activity muera ya.
             teardownCapture()
             EvidenceStore.drainBufferInto(id)
-            EvidenceStore.writeManifest(id, armedAtMillis, triggerMillis, System.currentTimeMillis())
-            UploadService.startIncident(applicationContext, id)
+            uploadDecisions[id] = true
+            finalizeIncidentAsync(id, armedAtMillis, triggerMillis, System.currentTimeMillis())
         } else {
             teardownCapture()
         }
@@ -835,12 +867,10 @@ class RecordingActivity : ComponentActivity() {
         isAwaitingUploadAnswer = false
         mainHandler.removeCallbacks(promptCountdown)
         overlayState = overlayState.copy(prompt = null)
-        if (send) {
-            Log.d(TAG, "Prompt → SÍ, subiendo $id")
-            UploadService.startIncident(applicationContext, id)
-        } else {
-            Log.d(TAG, "Prompt → NO, $id se queda solo en la unidad")
-        }
+        uploadDecisions[id] = send
+        Log.d(TAG, if (send) "Prompt → SÍ, $id se subirá al terminar el ensamblado"
+                   else "Prompt → NO, $id se queda solo en la unidad")
+        maybeUploadAssembled(id)
         // Si el servicio sigue armado la activity continúa (es el anillo); si no,
         // ya no queda nada que hacer aquí.
         if (!isHoldingCamera && !serviceRequested) finish()
