@@ -160,8 +160,44 @@ object EvidenceStore {
 
     // ── Incidentes ────────────────────────────────────────────────────────────
 
-    fun newIncidentId(at: Date = Date()): String =
-        "INC_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(at)
+    /**
+     * Id del siguiente incidente: **secuencia monótona** `INC_000001`,
+     * `INC_000002`… Un número por incidente, sin reutilización: en cadena de
+     * custodia un hueco en la numeración tiene que cantar a la vista, y un id
+     * basado en la hora (el formato anterior) no deja ver si falta algo.
+     *
+     * La secuencia sale del máximo de dos fuentes y por eso se auto-repara:
+     *
+     *  - el fichero contador en la raíz de FalconOne — sobrevive a reinicios
+     *    y a reinstalar la app, porque vive en la sdcard y no en datos de app;
+     *  - los incidentes que ya existen en disco — si el contador se pierde o
+     *    corrompe, el escaneo impide volver a empezar por 1 y repartir números
+     *    ya usados mientras quede algún incidente.
+     *
+     * Solo si se pierden ambos (sdcard nueva) arranca de 1 — y eso es un
+     * suceso que la cadena de custodia registra por otras vías.
+     *
+     * Los incidentes del formato antiguo (INC_<fecha>_<hora>) no puntúan en el
+     * escaneo y siguen sirviéndose con normalidad.
+     */
+    @Synchronized
+    fun newIncidentId(): String = "INC_%06d".format(nextSequence())
+
+    private const val COUNTER_NAME = ".incident_seq"
+
+    private fun nextSequence(): Int {
+        val counterFile = File(root, COUNTER_NAME)
+        val fromCounter = counterFile.takeIf { it.isFile }
+            ?.runCatching { readText().trim().toInt() }?.getOrNull() ?: 0
+        val fromDisk = incidentIds().maxOfOrNull { sequenceOf(it) ?: 0 } ?: 0
+        val next = maxOf(fromCounter, fromDisk) + 1
+        runCatching { counterFile.writeText(next.toString()) }
+            .onFailure { Log.w(TAG, "no se pudo persistir el contador de incidentes: ${it.message}") }
+        return next
+    }
+
+    private fun sequenceOf(incidentId: String): Int? =
+        Regex("""^INC_(\d{6})$""").find(incidentId)?.groupValues?.get(1)?.toIntOrNull()
 
     fun incidentDir(incidentId: String): File =
         File(incidentsDir, incidentId).also { it.mkdirs() }
