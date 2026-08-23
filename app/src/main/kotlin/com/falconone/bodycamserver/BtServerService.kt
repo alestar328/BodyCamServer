@@ -154,7 +154,7 @@ class BtServerService : Service() {
                 KeyEvent.KEYCODE_F4 -> executor.execute {
                     if (RecordingActivity.isRecording) {
                         Log.d(TAG, "SideKey F4 → STOP recording")
-                        RecordingActivity.stop(context)
+                        RecordingActivity.stop(context, askUpload = true)
                         send(Ntf.REC_STOP)
                     } else {
                         Log.d(TAG, "SideKey F4 → START recording")

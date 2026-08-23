@@ -9,11 +9,12 @@ Registro único de horas y entregas para las **dos aplicaciones del proyecto**.
 
 **Inicio del proyecto:** 2026-04-23 (primer commit de BodyCamServer)
 **Último pago recibido:** 2026-07-24
-**Última actualización de este archivo:** 2026-08-15
+**Tarifa:** 20 €/h
+**Última actualización de este archivo:** 2026-08-23
 
 ---
 
-## 0. Trazabilidad desde el último pago (2026-07-24 → 2026-08-15, 22 días)
+## 0. Trazabilidad desde el último pago (2026-07-24 → 2026-08-23, 30 días)
 
 El desglose es **por aplicación**, y dentro de cada aplicación por bloques de trabajo.
 Cada bloque lleva un identificador con el prefijo de su app (`BC-n` para BodyCamServer,
@@ -75,13 +76,30 @@ tocado por los dos bloques.
 **Integrar `BC-2` en `main` no será un merge limpio.** Hay que decidir a dónde va el
 enganche de `RecorderWatch` ahora que `CameraController` no existe.
 
+### Bloque `BC-3` — Pantalla en reposo + cronómetro · 2026-08-15 · ⚠️ sin commitear en `develop`
+> `RecordingActivity.kt` — al empezar a grabar la pantalla pasa a reposo; un toque alterna
+> reposo ↔ preview y muestra el tiempo transcurrido.
+
+Reposo = brillo a 0 más capa opaca, no dormir el panel: Android no lo permite sin permisos de
+administrador de dispositivo, y por esa vía el despertar pasaría por la pantalla de bloqueo.
+El `TextureView` se deja visible bajo la capa para no dejar sin frames al monitor remoto.
+Contador sobre `elapsedRealtime()`, inmune a que la unidad sincronice la hora a mitad de
+grabación. Compilado y desplegado en la unidad.
+
 ### Subtotal BodyCamServer
 
-| Bloque | Fecha | Estado | Volumen real de código | Horas |
-|---|---|---|---|---|
-| `BC-1` Grabación continua / EvidenceStore | 2026-08-09 | ✅ Entregado (`main`) | ~1027 añadidas / ~438 borradas · 12 archivos | — |
-| `BC-2` Cifrado (medición) | 2026-08-14 | ⚠️ Sin commitear (`develop`) | ~2803 añadidas · 7 archivos | — |
-| **Subtotal app** | | **2 días de actividad** | **~3830 añadidas · 19 archivos** | **—** |
+| Bloque | Fecha | Estado | Volumen real de código | Horas | Importe |
+|---|---|---|---|---|---|
+| `BC-1` Grabación continua / EvidenceStore + "Subir a servidor" | 2026-08-09, 08-16 | ✅ 08-09 entregado (`main`) · ⚠️ 08-16 sin commitear | ~1027 añadidas / ~438 borradas · 12 archivos | 8.0 | 160 € |
+| `BC-2` Cifrado (medición + determinación) | 2026-08-14, 08-15 | ⚠️ Sin commitear (`develop`) | ~2803 añadidas · 7 archivos | 9.0 | 180 € |
+| `BC-3` Pantalla en reposo + cronómetro | 2026-08-15 | ⚠️ Sin commitear (`develop`) | ~90 añadidas · 1 archivo | 0.0 ¹ | 0 € |
+| Administración (seguimiento de horas) | 2026-08-15 | ⚠️ Sin commitear | — | 0.0 | 0 € |
+| Reuniones de equipo (semana 17–21 ago) | 2026-08-16 | — | — | 2.0 | 40 € |
+| **Subtotal app** | | **4 días de actividad** | **~3920 añadidas · 20 archivos** | **19.0** | **380 €** |
+
+> ¹ `BC-3` queda a 0,0 h porque sus horas están imputadas dentro de la sesión del **2026-08-16**
+> (bloque `BC-1`, "visualización de tiempo de grabación"). El bloque se mantiene en la tabla para
+> no perder el rastro del trabajo, no porque no se hiciera.
 
 ---
 
@@ -107,18 +125,41 @@ pendiente de facturar aquí.
 
 ## 0.C · Total del proyecto desde el pago
 
-| Aplicación | Bloques | Días de actividad | Código añadido | Horas |
-|---|---|---|---|---|
-| BodyCamServer | `BC-1`, `BC-2` | 2 | ~3830 líneas · 19 archivos | — |
-| AeriaNexusPrototype | — | 0 | 0 | 0.0 |
-| **TOTAL PROYECTO** | **2** | **2** | **~3830 líneas · 19 archivos** | **— (sin registrar)** |
+| Aplicación | Bloques | Días de actividad | Código añadido | Horas | Importe |
+|---|---|---|---|---|---|
+| BodyCamServer | `BC-1`, `BC-2`, `BC-3` | 4 | ~3920 líneas · 20 archivos | 19.0 | 380 € |
+| AeriaNexusPrototype | — | 0 | 0 | 0.0 | 0 € |
+| **TOTAL PROYECTO** | **3** | **4** | **~3920 líneas · 20 archivos** | **19.0** | **380 €** |
 
-**Días con actividad desde el pago: 2** (2026-08-09 y 2026-08-14), ambos en BodyCamServer.
+**Días con actividad desde el pago: 4** (2026-08-09, 08-14, 08-15 y 08-16), todos en BodyCamServer.
 
-**Horas: no registradas** — este archivo se creó el 2026-08-15. Los volúmenes de código y
-las franjas horarias son la única evidencia objetiva disponible. En cuanto rellenes horas
-en §3, súbelas a la columna *Horas* de cada bloque y las tablas de subtotal y total cuadran
-solas.
+**Sobre las horas:** las del **09 y 14 de agosto** se han reconstruido a posteriori (6,0 h cada
+una) a partir de las marcas de tiempo de los archivos y del volumen de los commits — son
+estimaciones documentadas, no un cronómetro. Las del **15 y 16 de agosto** están registradas.
+Total pendiente de facturar: **19,0 h = 380 €**.
+
+### Desglose del 2026-08-15 (reloj del PC)
+
+| Hora | Hito | Evidencia |
+|---|---|---|
+| ~12:45 | Inicio de sesión | Primeras consultas al historial |
+| 12:56 | `SEGUIMIENTO.md` creado | mtime |
+| 13:02 | `SEGUIMIENTO.xlsx` generado | mtime |
+| 13:09 | Análisis de `RecordingActivity` de `main` | Copia en scratchpad |
+| 13:39 | Feature `BC-3` compilada · APK instalado en la unidad | mtime + `lastUpdateTime` del paquete |
+| 13:55–14:16 | Grabación de prueba de 20 min en la unidad | `VID_20260815_195544.mp4` |
+| 14:32 | Informe de cifrado publicado | mtime del HTML |
+| 15:09 | Cierre del cálculo | — |
+
+**Ventana total: 12:45 → 15:09 ≈ 2 h 24 min → 2,4 h.**
+
+Es la ventana entre el primer y el último rastro de trabajo en este PC, no horas de foco
+medidas. Solo cubre lo que dejó huella aquí. Ajusta el número si la sesión tuvo pausas o si
+hubo trabajo previo sin rastro.
+
+> Aparte, la unidad estuvo grabando **de 23:12 del 14-ago a 00:51 del 15-ago** (1 h 39 min,
+> el fichero de 2,2 GB) — prueba de grabación larga desatendida. Es tiempo de máquina, no de
+> trabajo, y por eso no se suma.
 
 ---
 
@@ -169,12 +210,20 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 
 ## 3. Registro de sesiones
 
-> **Nota:** las horas anteriores al 2026-08-15 **no se registraron** en su momento. Las filas del histórico (§7) están reconstruidas a partir de los commits de git y llevan las horas marcadas como `—` (desconocido). Rellénalas manualmente si las tienes anotadas en otro sitio; a partir de aquí se registra en tiempo real.
+> **Nota:** las horas del **09 y 14 de agosto** no se cronometraron en su momento; se han
+> reconstruido a partir de las marcas de tiempo de los archivos y del volumen de los commits.
+> Van marcadas como tal en la columna *Origen del dato*. A partir del 15-ago se registra en tiempo real.
 
-| Fecha | App | Bloque | Horas | Qué se hizo | Commit(s) |
-|---|---|---|---|---|---|
-| 2026-08-15 | BC | — | — | Alta del sistema de seguimiento de horas (cubre las dos apps) | _(pendiente)_ |
-|  |  |  |  |  |  |
+| Fecha | App | Bloque | Horas | Qué se hizo | Commit(s) | Facturado | Origen del dato |
+|---|---|---|---|---|---|---|---|
+| 2026-08-09 | BC | BC-1 | 6.0 | Grabación continua: `EvidenceStore` (buffer en anillo, pre-roll 120 s, segmentos 8 MB), reescritura de `RecordingActivity`, retirada de `CameraController` | `d4a4709` | No | Reconstruido de git |
+| 2026-08-14 | BC | BC-2 | 6.0 | Cifrado (medición): `CryptoBenchmark` (SHA-256 + AES-256-GCM por bloques), `RecorderWatch` (watchdog de grabaciones largas), endpoint `/benchmark`, fix de path traversal, 2 scripts Python, testing con vídeos reales | _(sin commitear)_ | No | Marcas de tiempo 15:47–22:56 |
+| 2026-08-15 | BC | — | 0.0 | Alta del sistema de seguimiento de horas (cubre las dos apps) | _(pendiente)_ | No | Registrado |
+| 2026-08-15 | BC | BC-2 | 3.0 | Cifrado (medición): `CryptoBenchmark` (SHA-256 + AES-256-GCM por bloques) — **continuación** | _(sin commitear)_ | No | Marcas de tiempo 15:47–22:56 |
+| 2026-08-16 | BC | BC-1 | 2.0 | Funcionalidad "Subir a servidor ¿sí/no?", visualización del tiempo de grabación | _(sin commitear)_ | No | Registrado |
+| 2026-08-16 | BC | — | 2.0 | Reuniones de equipo, semana del 17 al 21 de agosto | — | No | Registrado |
+|  |  | **TOTAL** | **19.0** |  |  |  | **380 €** |
+|  |  |  |  |  |  |  |  |
 
 ---
 
@@ -197,15 +246,22 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 
 **BodyCamServer** (`develop`, desde 2026-07-12):
 
-| Archivo | Estado |
-|---|---|
-| `app/src/main/kotlin/com/falconone/bodycamserver/CameraController.kt` | Modificado |
-| `app/src/main/kotlin/com/falconone/bodycamserver/FileServerService.kt` | Modificado |
-| `app/src/main/kotlin/com/falconone/bodycamserver/RecordingActivity.kt` | Modificado |
-| `app/src/main/kotlin/com/falconone/bodycamserver/CryptoBenchmark.kt` | Nuevo |
-| `app/src/main/kotlin/com/falconone/bodycamserver/RecorderWatch.kt` | Nuevo |
-| `SampleMP4-Generator.py` | Nuevo |
-| `aes-256Sha256.py` | Nuevo |
+Estado del árbol a **2026-08-23** (`git status`):
+
+| Archivo | Estado | Bloque |
+|---|---|---|
+| `app/src/main/kotlin/com/falconone/bodycamserver/BtServerService.kt` | Modificado | BC-1 (08-16) |
+| `app/src/main/kotlin/com/falconone/bodycamserver/ButtonAccessibilityService.kt` | Modificado | BC-1 (08-16) |
+| `app/src/main/kotlin/com/falconone/bodycamserver/MainActivity.kt` | Modificado | BC-1 (08-16) |
+| `app/src/main/kotlin/com/falconone/bodycamserver/RecordingActivity.kt` | Modificado | BC-1 / BC-3 |
+| `app/src/main/kotlin/com/falconone/bodycamserver/CryptoBenchmark.kt` | Ya commiteado en `develop` | BC-2 |
+| `app/src/main/kotlin/com/falconone/bodycamserver/RecorderWatch.kt` | Ya commiteado en `develop` | BC-2 |
+| `Seguridad-Claves-Bodycam.md` / `.pdf` | Nuevo, sin trackear | BC-2 |
+| `Resumen-Cifrado-Bodycam.pdf` | Nuevo, sin trackear | BC-2 |
+| `Security Feature List.xlsx` | Nuevo, sin trackear | Recibido del cliente |
+
+> ⚠️ **19,0 h pendientes de facturar y buena parte sin commitear.** Un commit es la evidencia
+> de la hora facturada: conviene cerrar estos cambios antes de emitir factura.
 
 **AeriaNexusPrototype:** árbol limpio.
 
@@ -215,29 +271,44 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 
 Las horas se llevan **separadas por aplicación** y el total del proyecto es su suma.
 
+**Tarifa aplicada: 20 €/h.**
+
 ### Desde el último pago (2026-07-24)
 
-| Aplicación | Horas | Nota |
-|---|---|---|
-| BodyCamServer | **0.0** | 2 días de actividad sin cuantificar (`BC-1`, `BC-2`) — ver §0.A |
-| AeriaNexusPrototype | **0.0** | Sin actividad — ver §0.B |
-| **TOTAL** | **0.0** | |
+| Aplicación | Horas | Importe | Nota |
+|---|---|---|---|
+| BodyCamServer | **19.0** | **380 €** | 09 y 14-ago reconstruidos; 15 y 16-ago registrados — ver §0.A |
+| AeriaNexusPrototype | **0.0** | 0 € | Sin actividad — ver §0.B |
+| **TOTAL** | **19.0** | **380 €** | Pendiente de facturar |
 
 ### Desde la última entrega (2026-08-09)
 
-| Aplicación | Horas | Nota |
-|---|---|---|
-| BodyCamServer | **0.0** | 1 sesión sin cuantificar (2026-08-14, `BC-2`) |
-| AeriaNexusPrototype | **0.0** | Sin actividad |
-| **TOTAL** | **0.0** | |
+| Aplicación | Horas | Importe | Nota |
+|---|---|---|---|
+| BodyCamServer | **13.0** | **260 €** | 14, 15 y 16 de agosto (el 09-ago está dentro de la entrega `d4a4709`) |
+| AeriaNexusPrototype | **0.0** | 0 € | Sin actividad |
+| **TOTAL** | **13.0** | **260 €** | |
 
 ### Acumulado del proyecto
 
-| Aplicación | Horas registradas | Horas reales |
+| Aplicación | Horas registradas | Importe | Horas reales |
+|---|---|---|---|
+| BodyCamServer | **19.0** | **380 €** | _mayor — el histórico previo al 09-ago no se registró, ver §7_ |
+| AeriaNexusPrototype | **0.0** | 0 € | _desconocido — ver §7_ |
+| **TOTAL PROYECTO** | **19.0** | **380 €** | _mayor que lo registrado_ |
+
+### Objetivo de facturación — cierre de septiembre 2026
+
+| Concepto | Horas | Importe |
 |---|---|---|
-| BodyCamServer | **0.0** | _desconocido — ver §7_ |
-| AeriaNexusPrototype | **0.0** | _desconocido — ver §7_ |
-| **TOTAL PROYECTO** | **0.0** | _desconocido_ |
+| Registrado a 2026-08-23 | 19.0 | 380 € |
+| Objetivo mínimo | 100.0 | **2000 €** |
+| **Pendiente de generar** | **81.0** | **1620 €** |
+
+Con 30 h/semana comprometidas, las 81 h restantes se cubren en **2,7 semanas**: el umbral de
+los 2000 € se cruza alrededor del **jueves 10 de septiembre de 2026**. La ventana completa
+(24-ago → 30-sep = 5 semanas + 3 días) da capacidad para **168 h**, es decir hasta 187 h
+acumuladas = **3740 €** si se llena por completo.
 
 ---
 
@@ -247,7 +318,7 @@ Las horas se llevan **separadas por aplicación** y el total del proyecto es su 
 
 | Fecha | Commit | Descripción | Horas |
 |---|---|---|---|
-| 2026-08-09 | `d4a4709` | avance grabacion continua | — |
+| 2026-08-09 | `d4a4709` | avance grabacion continua | 6.0 |
 | 2026-07-12 | `98cea82` | gitignore | — |
 | 2026-07-12 | `116a4c7` | arreglos de grabacion desde telefono | — |
 | 2026-07-12 | `b69cc42` | bluetooth arreglado y funcionalidad de camara | — |

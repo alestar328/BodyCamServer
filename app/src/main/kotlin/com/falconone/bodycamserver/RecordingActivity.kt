@@ -30,7 +30,9 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -40,10 +42,14 @@ import java.util.Locale
 
 private const val TAG = "FalconCamera"
 
+/** Margen para contestar a "Send to the server?" antes de dar por hecho que no. */
+private const val PROMPT_TIMEOUT_MILLIS = 30_000L
+
 class RecordingActivity : Activity() {
 
     companion object {
         const val ACTION_STOP = "com.falconone.STOP_RECORDING"
+        const val EXTRA_ASK_UPLOAD = "ask_upload"
 
         @Volatile var isRecording = false
             private set
@@ -69,8 +75,19 @@ class RecordingActivity : Activity() {
             )
         }
 
-        fun stop(context: Context) {
-            context.sendBroadcast(Intent(ACTION_STOP).setPackage(context.packageName))
+        /**
+         * @param askUpload pregunta en la pantalla de la unidad si el video se
+         *   envía a Nexus. Solo para las paradas que nacen del botón de
+         *   grabación: las que ordena el teléfono o las que preceden a un
+         *   livestream siguen subiendo solas, que ahí no hay nadie mirando esta
+         *   pantalla.
+         */
+        fun stop(context: Context, askUpload: Boolean = false) {
+            context.sendBroadcast(
+                Intent(ACTION_STOP)
+                    .setPackage(context.packageName)
+                    .putExtra(EXTRA_ASK_UPLOAD, askUpload)
+            )
         }
     }
 
@@ -98,9 +115,23 @@ class RecordingActivity : Activity() {
     // pasaría por la pantalla de bloqueo, que es justo lo que no queremos en
     // una bodycam. Así el táctil sigue vivo y un toque devuelve la imagen al
     // instante.
+    private lateinit var rootLayout: FrameLayout
     private lateinit var elapsedLabel: TextView
     private lateinit var screenCover: View
     private var screenAwake = true
+
+    // ── Confirmación de envío ─────────────────────────────────────
+    // Al parar con el botón de grabación se pregunta si el video va a Nexus. El
+    // fichero se queda en la unidad en los dos casos: la respuesta decide la
+    // subida, nunca si se guarda.
+    //
+    // Sin respuesta se deja de subir, y no lo contrario: subir es la irreversible
+    // de las dos acciones, y el video sigue en la unidad para mandarlo luego
+    // desde el teléfono.
+    private var uploadPrompt: View? = null
+    private var promptFile: File? = null
+    private var promptDeadline = 0L
+    private lateinit var promptHint: TextView
 
     /**
      * Origen del contador, en reloj monótono.
@@ -113,7 +144,9 @@ class RecordingActivity : Activity() {
 
     private val stopReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ACTION_STOP) stopAndFinish()
+            if (intent?.action == ACTION_STOP) {
+                stopAndFinish(intent.getBooleanExtra(EXTRA_ASK_UPLOAD, false))
+            }
         }
     }
 
@@ -172,7 +205,7 @@ class RecordingActivity : Activity() {
     private fun setScreenAwake(awake: Boolean) {
         screenAwake = awake
         screenCover.visibility = if (awake) View.GONE else View.VISIBLE
-        elapsedLabel.visibility = if (awake) View.VISIBLE else View.GONE
+        elapsedLabel.visibility = if (awake && isRecording) View.VISIBLE else View.GONE
 
         window.attributes = window.attributes.apply {
             screenBrightness =
@@ -191,6 +224,9 @@ class RecordingActivity : Activity() {
     // pantalla no hay nada más con lo que interactuar, y así el toque que la
     // despierta no dispara nada de debajo.
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        // Con la pregunta en pantalla los toques son de sus botones: si los
+        // consumiéramos aquí, Yes/No no se podrían pulsar.
+        if (uploadPrompt != null) return super.dispatchTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) setScreenAwake(!screenAwake)
         return true
     }
@@ -224,7 +260,7 @@ class RecordingActivity : Activity() {
             visibility = View.GONE
         }
 
-        val root = FrameLayout(this)
+        val root = FrameLayout(this).also { rootLayout = it }
         root.addView(textureView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
@@ -370,9 +406,9 @@ class RecordingActivity : Activity() {
         }
     }
 
-    private fun stopAndFinish() {
+    private fun stopAndFinish(askUpload: Boolean = false) {
         if (!isRecording) { finish(); return }
-        Log.d(TAG, "stopAndFinish")
+        Log.d(TAG, "stopAndFinish askUpload=$askUpload")
         isRecording = false
         mainHandler.removeCallbacks(monitorTick)
         mainHandler.removeCallbacks(elapsedTick)
@@ -380,18 +416,19 @@ class RecordingActivity : Activity() {
         try { captureSession?.stopRepeating() } catch (_: Exception) {}
         try { captureSession?.close() } catch (_: Exception) {}
         captureSession = null
+        // Fichero cerrado y utilizable. Si stop() lanza se queda a null: ese MP4
+        // sale sin índice y no vale ni para subirlo ni para ofrecerlo.
+        var savedFile: File? = null
         try {
             mediaRecorder?.stop()
             watch?.onStopped()   // tras stop() el tamaño del fichero ya es el definitivo
             Log.d(TAG, "File saved: ${outputFile?.name}")
-            // Notify gallery so the video appears immediately
             outputFile?.let { file ->
-                // Notify gallery
+                // Notify gallery so the video appears immediately
                 MediaScannerConnection.scanFile(
                     applicationContext, arrayOf(file.absolutePath), arrayOf("video/mp4"), null
                 )
-                // Auto-upload to server
-                UploadService.start(applicationContext, file.absolutePath)
+                savedFile = file
             }
         } catch (e: Exception) { Log.e(TAG, "recorder.stop: ${e.message}") }
         try { mediaRecorder?.release() } catch (_: Exception) {}
@@ -399,14 +436,143 @@ class RecordingActivity : Activity() {
         try { cameraDevice?.close() } catch (_: Exception) {}
         cameraDevice = null
         HardwareController.ledGreen()
-        finish()
+
+        val file = savedFile
+        if (askUpload && file != null) {
+            // La cámara ya está suelta: la activity sigue viva solo por la
+            // pregunta, así que el visor o el livestream pueden arrancar igual.
+            showUploadPrompt(file)
+        } else {
+            file?.let { UploadService.start(applicationContext, it.absolutePath) }
+            finish()
+        }
+    }
+
+    // ── Pregunta de envío ───────────────────────────────────────
+
+    private val promptCountdown = object : Runnable {
+        override fun run() {
+            val left = ((promptDeadline - SystemClock.elapsedRealtime()) / 1000).toInt()
+            if (left <= 0) {
+                Log.d(TAG, "Prompt sin respuesta → no se envía")
+                resolveUploadPrompt(send = false)
+                finish()
+                return
+            }
+            promptHint.text = "No answer in ${left}s = No"
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun showUploadPrompt(file: File) {
+        promptFile = file
+        setScreenAwake(true)  // la pregunta no sirve de nada con la capa puesta
+
+        promptHint = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.parseColor("#aaaaaa"))
+            gravity = Gravity.CENTER
+        }
+
+        val question = TextView(this).apply {
+            text = "Send to the server?"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(16, 0, 16, 20)
+        }
+
+        val name = TextView(this).apply {
+            text = file.name
+            textSize = 12f
+            setTextColor(Color.parseColor("#888888"))
+            gravity = Gravity.CENTER
+            setPadding(16, 0, 16, 20)
+        }
+
+        fun answerButton(label: String, color: String, send: Boolean) = Button(this).apply {
+            text = label
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor(color))
+            setOnClickListener {
+                resolveUploadPrompt(send)
+                finish()
+            }
+        }
+
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            val weighted = {
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { setMargins(12, 0, 12, 0) }
+            }
+            addView(answerButton("Yes", "#2e7d32", true), weighted())
+            addView(answerButton("No", "#5a5a5a", false), weighted())
+        }
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#e6000000"))
+            setPadding(20, 20, 20, 20)
+            addView(question)
+            addView(name)
+            addView(buttons, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            addView(promptHint, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 20 })
+        }
+
+        rootLayout.addView(panel, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        uploadPrompt = panel
+
+        promptDeadline = SystemClock.elapsedRealtime() + PROMPT_TIMEOUT_MILLIS
+        mainHandler.post(promptCountdown)
+        Log.d(TAG, "Preguntando envio de ${file.name}")
+    }
+
+    /** Cierra la pregunta. Idempotente: la segunda llamada ya no encuentra fichero. */
+    private fun resolveUploadPrompt(send: Boolean) {
+        val file = promptFile ?: return
+        promptFile = null
+        mainHandler.removeCallbacks(promptCountdown)
+        uploadPrompt?.let { rootLayout.removeView(it) }
+        uploadPrompt = null
+        if (send) {
+            Log.d(TAG, "Prompt → SÍ, subiendo ${file.name}")
+            UploadService.start(applicationContext, file.absolutePath)
+        } else {
+            Log.d(TAG, "Prompt → NO, ${file.name} se queda solo en la unidad")
+        }
+    }
+
+    /**
+     * Volver a pulsar grabar con la pregunta abierta.
+     *
+     * La activity es SINGLE_TOP, así que ese segundo arranque entra por aquí en
+     * vez de crear otra instancia: sin esto la unidad se quedaría con la pregunta
+     * puesta y sin grabar. Empezar otra grabación cuenta como no enviar — el
+     * video anterior sigue en la unidad de todas formas.
+     */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (uploadPrompt == null) return
+        Log.d(TAG, "Nueva grabación con la pregunta abierta → no se envía")
+        resolveUploadPrompt(send = false)
+        openCamera()
     }
 
     // F4 while recording → stop. All other buttons pass through.
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_F4 && isRecording) {
             Log.d(TAG, "F4 → stop recording")
-            stopAndFinish()
+            stopAndFinish(askUpload = true)
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -420,6 +586,7 @@ class RecordingActivity : Activity() {
         watch = null
         mainHandler.removeCallbacks(monitorTick)
         mainHandler.removeCallbacks(elapsedTick)
+        mainHandler.removeCallbacks(promptCountdown)
         monitorJpeg = null
         // Devolver el brillo: es un ajuste de ventana, pero si la activity se
         // destruye con la capa puesta conviene no dejar rastro.

@@ -30,7 +30,7 @@ class ButtonAccessibilityService : AccessibilityService() {
             KeyEvent.KEYCODE_F2 -> {
                 if (RecordingActivity.isRecording) {
                     Log.d(TAG, "F2 → STOP recording")
-                    RecordingActivity.stop(this)
+                    RecordingActivity.stop(this, askUpload = true)
                 } else {
                     Log.d(TAG, "F2 → START recording")
                     RecordingActivity.start(this)

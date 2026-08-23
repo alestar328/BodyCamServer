@@ -212,7 +212,8 @@ class MainActivity : Activity() {
 
     private fun toggleRecording() {
         if (RecordingActivity.isRecording) {
-            RecordingActivity.stop(this)
+            // Parada manual desde la unidad: pregunta antes de subir.
+            RecordingActivity.stop(this, askUpload = true)
         } else {
             TorchController.release()
             RecordingActivity.start(this)
