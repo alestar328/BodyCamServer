@@ -2,6 +2,27 @@ package com.falconone.bodycamserver
 
 import java.io.File
 
+/**
+ * Único punto que decide el color del LED.
+ *
+ * Antes cada sitio escribía su color por su cuenta y se pisaban: conectar el
+ * teléfono ponía verde "standby" encima del azul de buffer, aunque el anillo
+ * siguiera armado. Aquí el color sale del estado real de la unidad, así que da
+ * igual quién llame ni en qué orden — el resultado es siempre el correcto.
+ *
+ * Prioridad: grabando > emitiendo > en buffer > reposo.
+ */
+object LedSignals {
+    fun refresh() {
+        when {
+            RecordingActivity.isRecording -> HardwareController.ledRedBlink()
+            LivestreamService.isStreaming -> HardwareController.ledYellowBlink()
+            RecordingActivity.state == CaptureState.ARMED -> HardwareController.ledBlue()
+            else -> HardwareController.ledGreen()
+        }
+    }
+}
+
 // Controla el hardware de la bodycam vía los nodos sysfs documentados en W1-4G
 object HardwareController {
 
@@ -49,10 +70,15 @@ object HardwareController {
             file.writeText(value)
             true
         } catch (_: Exception) {
-            // Requiere permisos root para algunos nodos — intentar vía shell
+            // Requiere permisos root para algunos nodos — intentar vía shell.
             try {
-                Runtime.getRuntime().exec(arrayOf("sh", "-c", "echo $value > ${file.absolutePath}"))
-                true
+                val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "echo $value > ${file.absolutePath}"))
+                // Antes se devolvía true sin mirar: exec() no falla aunque el
+                // echo muera por permisos, y el fallo quedaba invisible. Ahora
+                // el exit code decide, y si falla queda rastro en logcat.
+                val ok = p.waitFor() == 0
+                if (!ok) android.util.Log.w("FalconHW", "sysfs rechazado: $value -> ${file.absolutePath}")
+                ok
             } catch (_: Exception) { false }
         }
     }

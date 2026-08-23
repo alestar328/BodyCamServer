@@ -485,7 +485,7 @@ class RecordingActivity : ComponentActivity() {
         try { unregisterReceiver(commandReceiver) } catch (_: Exception) {}
         teardownCapture()
         cameraThread.quitSafely()
-        HardwareController.ledGreen()
+        LedSignals.refresh()
         super.onDestroy()
     }
 
@@ -660,9 +660,9 @@ class RecordingActivity : ComponentActivity() {
             setScreenAwake(true)
         }
         mainHandler.post(monitorTick)
-        // Azul fijo = en buffer. Es la señal pedida por producto: la unidad está
-        // en servicio y guarda los últimos 20 s aunque nadie haya pulsado grabar.
-        HardwareController.ledBlue()
+        // Azul fijo = en buffer (lo decide LedSignals por estado). Es la señal de
+        // producto: en servicio, guardando los últimos 20 s sin que nadie grabe.
+        LedSignals.refresh()
         notifyStateChanged()
         Log.d(TAG, "ARMED — anillo activo")
 
@@ -700,7 +700,7 @@ class RecordingActivity : ComponentActivity() {
             // Al empezar a grabar la pantalla pasa a reposo; un toque la despierta.
             setScreenAwake(false)
         }
-        HardwareController.ledRedBlink()
+        LedSignals.refresh()   // estado ya es RECORDING → rojo parpadeando
         notifyStateChanged()
         Log.d(TAG, "RECORDING $id — pre-roll de ${promoted.size} segmentos")
     }
@@ -774,7 +774,7 @@ class RecordingActivity : ComponentActivity() {
         EvidenceStore.clearRing()
         incidentId = null
         state = CaptureState.IDLE
-        HardwareController.ledGreen()
+        LedSignals.refresh()
         notifyStateChanged()
         finish()
     }

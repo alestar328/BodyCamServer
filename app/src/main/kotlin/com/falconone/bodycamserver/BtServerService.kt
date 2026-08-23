@@ -198,7 +198,7 @@ class BtServerService : Service() {
         super.onCreate()
         Log.d(TAG, "BtServerService onCreate")
         HardwareController.irOff()  // reset IR state on service start
-        HardwareController.ledGreen()  // standby — evita que quede azul pegado del firmware/sesión previa
+        LedSignals.refresh()  // pinta por estado real — evita pisar el azul de buffer o dejar colores pegados del firmware
         FileServerService.start()
         acquireWakeLock()
         createNotificationChannel()
@@ -270,7 +270,7 @@ class BtServerService : Service() {
                 connectedClient = device.name?.let { "$it (${device.address})" } ?: device.address
                 Log.d(TAG, "Client connected: ${device.address}")
                 updateNotification("Teléfono conectado: $connectedClient")
-                HardwareController.ledGreen()
+                LedSignals.refresh()
                 handleClient(socket)
             } catch (e: IOException) {
                 Log.e(TAG, "acceptLoop error: ${e.message}")
@@ -307,7 +307,7 @@ class BtServerService : Service() {
             // drenar batería. Si el enlace vuelve, el teléfono lo reabre.
             PreviewController.stop()
             updateNotification("Esperando conexión…")
-            HardwareController.ledGreen()
+            LedSignals.refresh()
         }
     }
 

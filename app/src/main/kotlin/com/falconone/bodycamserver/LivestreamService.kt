@@ -154,7 +154,7 @@ object LivestreamService {
             engine = null
             isStreaming = false
             _micEnabled = false
-            HardwareController.ledGreen()
+            LedSignals.refresh()
             Log.d(TAG, "Livestream stopped")
 
             // Devolver la cámara al anillo si el agente tenía el servicio activo.
