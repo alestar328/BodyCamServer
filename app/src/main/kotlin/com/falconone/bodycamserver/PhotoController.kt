@@ -17,8 +17,8 @@ private const val TAG = "FalconPhoto"
 object PhotoController {
 
     fun takePhoto(context: Context): Boolean {
-        if (RecordingActivity.isRecording) {
-            Log.w(TAG, "Cannot take photo while recording (camera in use)")
+        if (RecordingActivity.isHoldingCamera) {
+            Log.w(TAG, "Cannot take photo while capture is active (camera in use)")
             return false
         }
         TorchController.release()

@@ -104,6 +104,7 @@ class MainActivity : ComponentActivity() {
                 else -> Link.WAITING
             },
             clientName = client,
+            armed = RecordingActivity.state == CaptureState.ARMED,
             recording = RecordingActivity.isRecording,
             streaming = LivestreamService.isStreaming,
             // El "conectando" no lo sabe ningún servicio: es local, desde que se
@@ -124,7 +125,10 @@ class MainActivity : ComponentActivity() {
         requestPermissions()
         if (allPermissionsGranted()) startServer()
 
-        registerReceiver(recordingReceiver, IntentFilter(RecordingActivity.ACTION_STOP))
+        registerReceiver(
+            recordingReceiver,
+            IntentFilter(RecordingActivity.ACTION_STATE_CHANGED)
+        )
         refresh()
         handler.post(uiRefresher)
     }
@@ -232,6 +236,8 @@ enum class Link { OFFLINE, WAITING, CONNECTED }
 data class PanelState(
     val link: Link = Link.OFFLINE,
     val clientName: String? = null,
+    /** Servicio continuo armado: el anillo pre-evento está grabando. */
+    val armed: Boolean = false,
     val recording: Boolean = false,
     val streaming: Boolean = false,
     val sosConnecting: Boolean = false,
@@ -336,8 +342,15 @@ private fun LinkRow(state: PanelState) {
  */
 @Composable
 private fun IndicatorRow(state: PanelState) {
+    // El punto REC tiene tres estados: rojo grabando, ámbar con el anillo armado
+    // (grabación continua sin incidente), apagado en reposo.
+    val recColor = when {
+        state.recording -> RED
+        state.armed     -> AMBER
+        else            -> DIM
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Indicator(R.drawable.ic_rec, REC_ICON_SIZE, "REC", if (state.recording) RED else DIM)
+        Indicator(R.drawable.ic_rec, REC_ICON_SIZE, "REC", recColor)
         Spacer(Modifier.width(14.dp))
         Indicator(R.drawable.ic_live, LIVE_ICON_SIZE, "LIVE", if (state.streaming) BLUE else DIM)
     }

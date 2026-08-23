@@ -40,8 +40,11 @@ object PreviewController {
     @Synchronized
     fun start(): Boolean {
         if (isActive) return true
-        if (RecordingActivity.isRecording) {
-            Log.w(TAG, "Cannot start preview while recording (camera in use)")
+        // Con el servicio armado el monitor sale de la propia sesión de captura
+        // (FileServerService.liveJpeg), así que abrir un visor Camera1 aparte
+        // solo chocaría con ella.
+        if (RecordingActivity.isHoldingCamera) {
+            Log.w(TAG, "Cannot start preview while capture is active (camera in use)")
             return false
         }
         TorchController.release()

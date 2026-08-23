@@ -58,9 +58,13 @@ import androidx.compose.ui.unit.dp
  */
 const val OVERLAY_ROTATION_DEGREES = -90f
 
-/** Pregunta de envío en curso. `secondsLeft` es la cuenta atrás hasta el "No" por defecto. */
+/**
+ * Pregunta de envío en curso. [label] es lo que se enseña bajo la pregunta —
+ * hoy, el id del incidente recién cerrado. [secondsLeft] es la cuenta atrás
+ * hasta el "No" por defecto.
+ */
 data class PromptState(
-    val fileName: String,
+    val label: String,
     val secondsLeft: Int,
 )
 
@@ -199,7 +203,7 @@ private fun UploadPrompt(state: PromptState, onAnswer: (Boolean) -> Unit) {
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = state.fileName,
+            text = state.label,
             color = FILENAME_GREY,
             fontSize = FILENAME_TEXT_SIZE.asFixedSp(),
             maxLines = 1,
@@ -253,7 +257,7 @@ private const val PANEL_DP = 190
 @Preview(name = "1 · Pregunta de envío", widthDp = PANEL_DP, heightDp = PANEL_DP)
 @Composable
 private fun PreviewPrompt() = RecordingOverlay(
-    state = OverlayState(prompt = PromptState("VID_20260823_171614.mp4", 30)),
+    state = OverlayState(prompt = PromptState("INC_20260823_181500", 30)),
     onAnswer = {},
     rotationDegrees = 0f,
 )
@@ -261,7 +265,7 @@ private fun PreviewPrompt() = RecordingOverlay(
 @Preview(name = "2 · Pregunta a punto de vencer", widthDp = PANEL_DP, heightDp = PANEL_DP)
 @Composable
 private fun PreviewPromptExpiring() = RecordingOverlay(
-    state = OverlayState(prompt = PromptState("VID_20260823_171614.mp4", 3)),
+    state = OverlayState(prompt = PromptState("INC_20260823_181500", 3)),
     onAnswer = {},
     rotationDegrees = 0f,
 )
@@ -277,6 +281,6 @@ private fun PreviewRecording() = RecordingOverlay(
 @Preview(name = "4 · Pregunta girada (framebuffer real)", widthDp = PANEL_DP, heightDp = PANEL_DP)
 @Composable
 private fun PreviewPromptRotated() = RecordingOverlay(
-    state = OverlayState(prompt = PromptState("VID_20260823_171614.mp4", 30)),
+    state = OverlayState(prompt = PromptState("INC_20260823_181500", 30)),
     onAnswer = {},
 )
