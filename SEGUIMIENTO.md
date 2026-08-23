@@ -10,7 +10,7 @@ Registro único de horas y entregas para las **dos aplicaciones del proyecto**.
 **Inicio del proyecto:** 2026-04-23 (primer commit de BodyCamServer)
 **Último pago recibido:** 2026-07-24
 **Tarifa:** 20 €/h
-**Última actualización de este archivo:** 2026-08-23 18:10
+**Última actualización de este archivo:** 2026-08-23 19:15
 
 ---
 
@@ -90,13 +90,13 @@ grabación. Compilado y desplegado en la unidad.
 
 | Bloque | Fecha | Estado | Volumen real de código | Horas | Importe |
 |---|---|---|---|---|---|
-| `BC-1` Grabación continua / EvidenceStore + "Subir a servidor" | 2026-08-09, 08-16 | ✅ 08-09 entregado (`main`) · ⚠️ 08-16 sin commitear | ~1027 añadidas / ~438 borradas · 12 archivos | 8.0 | 160 € |
+| `BC-1` Grabación continua / EvidenceStore + "Subir a servidor" | 2026-08-09, 08-16, 08-23 | ✅ Integrado en `develop` (merge `06008b2`) y validado en la unidad | ~1027 añadidas / ~438 borradas · 12 archivos + merge | 9.0 | 180 € |
 | `BC-2` Cifrado (medición + determinación) | 2026-08-14, 08-15 | ⚠️ Sin commitear (`develop`) | ~2803 añadidas · 7 archivos | 9.0 | 180 € |
 | `BC-3` Pantalla en reposo + cronómetro | 2026-08-15 | ✅ En `develop` | ~90 añadidas · 1 archivo | 0.0 ¹ | 0 € |
 | `BC-4` Panel de control (UX + Compose) | 2026-08-23 | ✅ En `develop` | ~978 añadidas / ~329 borradas · 16 archivos | 1.8 | 36 € |
 | Análisis de ciberseguridad + administración | 2026-08-15, 08-23 | ✅ En `develop` | — | 0.4 | 8 € |
 | Reuniones de equipo (semana 17–21 ago) | 2026-08-16 | — | — | 2.0 | 40 € |
-| **Subtotal app** | | **5 días de actividad** | **~4900 añadidas · 36 archivos** | **21.2** | **424 €** |
+| **Subtotal app** | | **5 días de actividad** | **~4900 añadidas · 36 archivos** | **22.2** | **444 €** |
 
 > ¹ `BC-3` queda a 0,0 h porque sus horas están imputadas dentro de la sesión del **2026-08-16**
 > (bloque `BC-1`, "visualización de tiempo de grabación"). El bloque se mantiene en la tabla para
@@ -128,16 +128,16 @@ pendiente de facturar aquí.
 
 | Aplicación | Bloques | Días de actividad | Código añadido | Horas | Importe |
 |---|---|---|---|---|---|
-| BodyCamServer | `BC-1`, `BC-2`, `BC-3`, `BC-4` | 5 | ~4900 líneas · 36 archivos | 21.2 | 424 € |
+| BodyCamServer | `BC-1`, `BC-2`, `BC-3`, `BC-4` | 5 | ~4900 líneas · 36 archivos | 22.2 | 444 € |
 | AeriaNexusPrototype | — | 0 | 0 | 0.0 | 0 € |
-| **TOTAL PROYECTO** | **4** | **5** | **~4900 líneas · 36 archivos** | **21.2** | **424 €** |
+| **TOTAL PROYECTO** | **4** | **5** | **~4900 líneas · 36 archivos** | **22.2** | **444 €** |
 
 **Días con actividad desde el pago: 5** (2026-08-09, 08-14, 08-15, 08-16 y 08-23), todos en BodyCamServer.
 
 **Sobre las horas:** las del **09 y 14 de agosto** se han reconstruido a posteriori (6,0 h cada
 una) a partir de las marcas de tiempo de los archivos y del volumen de los commits — son
 estimaciones documentadas, no un cronómetro. Las del **15 y 16 de agosto** están registradas.
-Total pendiente de facturar: **21,2 h = 424 €**.
+Total pendiente de facturar: **22,2 h = 444 €**.
 
 ### Desglose del 2026-08-15 (reloj del PC)
 
@@ -168,15 +168,18 @@ hubo trabajo previo sin rastro.
 
 | Concepto | BodyCamServer | AeriaNexusPrototype |
 |---|---|---|
-| Rama actual | `develop` | `main` |
-| Último commit | `d4a4709` — 2026-08-09 (en `main`) | `74cba54` — 2026-07-22 |
-| Último commit de la rama de trabajo | `98cea82` — 2026-07-12 (`develop`) | `74cba54` — 2026-07-22 |
-| Trabajo sin commitear | **Sí** (ver §5) | No |
+| Rama principal | **`develop`** (desde 2026-08-23) | `main` |
+| Último commit | `f2e7e52` — 2026-08-23 | `74cba54` — 2026-07-22 |
+| Relación con `main` | `develop` ⊇ `main` (merge `06008b2`) | — |
+| Trabajo sin commitear | No (solo seguimiento) | No |
 
-**Última entrega (push a `main`):** 2026-08-09 → BodyCamServer `d4a4709` "avance grabacion continua"
-**Días desde la última entrega:** 6 días (a fecha 2026-08-15)
+**Última entrega (push a `main`):** 2026-08-09 → `d4a4709` "avance grabacion continua"
+**Estado funcional:** grabación continua con pre-roll de 20 s **validada en la unidad
+física** el 2026-08-23 (ciclo grabar → incidente con manifest → rearme automático).
 
-> ⚠️ `develop` de BodyCamServer está **detrás** de `main`: `d4a4709` (2026-08-09) no está integrado en `develop`. Conviene rebasar/mergear antes de seguir.
+> ✅ La divergencia `develop`/`main` del aviso anterior quedó **cerrada** con el merge
+> `06008b2` (2026-08-23). `develop` es la rama principal; `main` queda como rama de
+> entregas.
 
 ---
 
@@ -224,8 +227,9 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 | 2026-08-16 | BC | BC-1 | 2.0 | Funcionalidad "Subir a servidor ¿sí/no?", visualización del tiempo de grabación | _(sin commitear)_ | No | Registrado |
 | 2026-08-16 | BC | — | 2.0 | Reuniones de equipo, semana del 17 al 21 de agosto | — | No | Registrado |
 | 2026-08-23 | BC | — | 0.4 | Análisis del *Security Feature List* (34 features: 15 viables sin backend, 12 parciales, 7 bloqueadas), ruta de desarrollo hasta fin de septiembre y actualización del seguimiento | `db04e55` | No | Marcas de tiempo 15:52–16:16 |
+| 2026-08-23 | BC | BC-1 | 1.0 | Grabación continua integrada en `develop` (merge de `main`): anillo + incidentes + manifest sobre la UI Compose. Requisitos de producto: buffer automático al abrir, pre-roll de 20 s, LED azul en servicio (LedSignals centralizado). Depuración en la unidad: el parche de armado no había llegado al disco; verificado ciclo completo grabar→manifest→rearme en hardware | `06008b2`, `56d5478`, `99b42a6`, `f2e7e52` | No | Marcas de tiempo 18:04–19:06 |
 | 2026-08-23 | BC | BC-4 | 1.8 | Panel de control: 3 bugs de la pregunta de envío (`finish()` en paradas redundantes, rebote de F2, arranque de grabación con la pregunta abierta), rediseño para pantalla de 3 cm con iconos vectoriales, migración de las dos pantallas a Compose con 8 previews, fullscreen real (tema, inmersivo, insets del decor) | `db04e55`, `a599da9` | No | Marcas de tiempo 16:16–18:04 |
-|  |  | **TOTAL** | **21.2** |  |  |  | **424 €** |
+|  |  | **TOTAL** | **22.2** |  |  |  | **444 €** |
 |  |  |  |  |  |  |  |  |
 
 ---
@@ -247,30 +251,27 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 
 ## 5. Trabajo en curso
 
-**Árbol limpio en las dos apps a 2026-08-23 18:10.** Todo lo trabajado está commiteado
-en `develop` de BodyCamServer:
+**Árbol limpio a 2026-08-23 19:15.** Todo commiteado en `develop` de BodyCamServer:
 
-| Commit | Hora | Contenido | Bloque |
-|---|---|---|---|
-| `db04e55` | 16:20 | Arreglos de la pregunta de envío, documentos de cifrado y seguridad, seguimiento | BC-2, BC-4 |
-| `a599da9` | 18:02 | Panel de control rediseñado, migración a Compose, fullscreen, iconos vectoriales | BC-4 |
+| Commit | Hora | Contenido |
+|---|---|---|
+| `db04e55` | 16:20 | Arreglos de la pregunta de envío, documentos de cifrado, seguimiento |
+| `a599da9` | 18:02 | Panel de control rediseñado, migración a Compose, fullscreen |
+| `06008b2` | 18:23 | **Merge de `main`**: grabación continua (anillo + incidentes + manifest) sobre la UI de `develop` |
+| `56d5478` | 18:40 | Buffer automático al abrir, pre-roll 20 s, LED azul (parcial: ver `f2e7e52`) |
+| `2ecc7d5` | 18:43 | Seguimiento (usuario) |
+| `99b42a6` | 18:48 | LED por estado real (`LedSignals`) |
+| `f2e7e52` | 19:09 | Armado al abrir — la pieza de `56d5478` que no llegó al disco |
 
-### ⚠️ Las ramas han divergido
+### ✅ La divergencia con `main` está cerrada
 
-Ya no es que `develop` esté detrás de `main`: ahora van por caminos distintos.
+El merge `06008b2` integró `d4a4709` en `develop`. **`develop` es la rama principal**
+desde el 2026-08-23: contiene todo `main` más la UI nueva. `CameraController.kt` y
+`RecorderWatch.kt` quedaron eliminados (sin llamantes).
 
-| | Commits exclusivos |
-|---|---|
-| Solo en `main` | `d4a4709` (grabación continua / `EvidenceStore`) |
-| Solo en `develop` | `420590e`, `db04e55`, `a599da9` |
-
-Sigue en pie el conflicto de §0.A: `d4a4709` **borró** `CameraController.kt`, que es de los
-archivos que toca el trabajo de `develop`. Y ahora se suma que `MainActivity.kt` y
-`RecordingActivity.kt` están reescritos a fondo en `develop` (Compose) mientras `main` tiene
-la versión de Views.
-
-**Cuanto más se tarde en integrar, más caro sale el merge.** Es la tarea que abre la semana 1
-del plan y conviene no moverla de ahí.
+**Validado en la unidad física** (19:04): ciclo completo grabar → incidente con
+manifest → rearme automático del anillo. Pendiente de validar: pre-roll completo
+tras >35 s en buffer, sesión larga de rotación, LED azul confirmado visualmente.
 
 ---
 
@@ -284,33 +285,33 @@ Las horas se llevan **separadas por aplicación** y el total del proyecto es su 
 
 | Aplicación | Horas | Importe | Nota |
 |---|---|---|---|
-| BodyCamServer | **21.2** | **424 €** | 09 y 14-ago reconstruidos; del 15-ago en adelante registrados — ver §0.A |
+| BodyCamServer | **22.2** | **444 €** | 09 y 14-ago reconstruidos; del 15-ago en adelante registrados — ver §0.A |
 | AeriaNexusPrototype | **0.0** | 0 € | Sin actividad — ver §0.B |
-| **TOTAL** | **21.2** | **424 €** | Pendiente de facturar |
+| **TOTAL** | **22.2** | **444 €** | Pendiente de facturar |
 
 ### Desde la última entrega (2026-08-09)
 
 | Aplicación | Horas | Importe | Nota |
 |---|---|---|---|
-| BodyCamServer | **15.2** | **304 €** | 14, 15, 16 y 23 de agosto (el 09-ago está dentro de la entrega `d4a4709`) |
+| BodyCamServer | **16.2** | **324 €** | 14, 15, 16 y 23 de agosto (el 09-ago está dentro de la entrega `d4a4709`) |
 | AeriaNexusPrototype | **0.0** | 0 € | Sin actividad |
-| **TOTAL** | **15.2** | **304 €** | |
+| **TOTAL** | **16.2** | **324 €** | |
 
 ### Acumulado del proyecto
 
 | Aplicación | Horas registradas | Importe | Horas reales |
 |---|---|---|---|
-| BodyCamServer | **21.2** | **424 €** | _mayor — el histórico previo al 09-ago no se registró, ver §7_ |
+| BodyCamServer | **22.2** | **444 €** | _mayor — el histórico previo al 09-ago no se registró, ver §7_ |
 | AeriaNexusPrototype | **0.0** | 0 € | _desconocido — ver §7_ |
-| **TOTAL PROYECTO** | **21.2** | **424 €** | _mayor que lo registrado_ |
+| **TOTAL PROYECTO** | **22.2** | **444 €** | _mayor que lo registrado_ |
 
 ### Objetivo de facturación — cierre de septiembre 2026
 
 | Concepto | Horas | Importe |
 |---|---|---|
-| Registrado a 2026-08-23 | 21.2 | 424 € |
+| Registrado a 2026-08-23 | 22.2 | 444 € |
 | Objetivo mínimo | 100.0 | **2000 €** |
-| **Pendiente de generar** | **78.8** | **1576 €** |
+| **Pendiente de generar** | **77.8** | **1556 €** |
 
 Con 30 h/semana comprometidas, las 81 h restantes se cubren en **2,7 semanas**: el umbral de
 los 2000 € se cruza alrededor del **jueves 10 de septiembre de 2026**. La ventana completa
@@ -325,6 +326,11 @@ acumuladas = **3740 €** si se llena por completo.
 
 | Fecha | Commit | Descripción | Horas |
 |---|---|---|---|
+| 2026-08-23 | `f2e7e52` | armar al abrir la app — la pieza de 56d5478 que no llegó al disco | 0.2 |
+| 2026-08-23 | `99b42a6` | LED por estado real: el azul de buffer ya no se pisa con verde | 0.2 |
+| 2026-08-23 | `2ecc7d5` | pre buffer integrado, led azul y armar al abrir la app (seguimiento) | — |
+| 2026-08-23 | `56d5478` | buffer automático al abrir, pre-roll de 20 s y LED azul en servicio | 0.2 |
+| 2026-08-23 | `06008b2` | merge main: grabación continua con pre-roll sobre la UI nueva de develop | 0.4 |
 | 2026-08-23 | `a599da9` | botones en pantalla quitados, prebuffer mejorado, ux modo grabacion y enviar a servidor mejorado | 1.8 |
 | 2026-08-23 | `db04e55` | botones de subir a server | 0.4 |
 | 2026-08-15 | `420590e` | no segmentacion de video, pantalla cerrada al grabar, cronometro | 0.7 |
