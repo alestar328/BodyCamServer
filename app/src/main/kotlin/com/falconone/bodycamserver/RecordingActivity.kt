@@ -56,7 +56,7 @@ enum class CaptureState { IDLE, ARMED, RECORDING }
  *
  * En ARMED la cámara está abierta y MediaRecorder rota segmentos sobre el anillo
  * de [EvidenceStore], que se va autodescartando: la unidad "recuerda" los últimos
- * dos minutos sin guardar nada de forma permanente. Al pulsar grabar, los
+ * [EvidenceStore.PRE_ROLL_MILLIS] sin guardar nada permanente. Al pulsar grabar, los
  * segmentos que cubren el pre-roll se promueven al incidente (un renameTo, sin
  * copiar bytes) y a partir de ahí cada segmento sellado va directo al incidente.
  *
@@ -229,6 +229,36 @@ class RecordingActivity : ComponentActivity() {
     // ── Estado de la UI (RecordingOverlay) ────────────────────────────────────
 
     private var overlayState by mutableStateOf(OverlayState())
+
+    /**
+     * Estado del panel de control que se dibuja sobre el preview en ARMED.
+     *
+     * Al armar al abrir la app, esta activity tapa a MainActivity durante todo el
+     * servicio: si no pintáramos el panel aquí, el SOS y el estado del enlace
+     * quedarían inaccesibles justo cuando más tiempo se pasa en la unidad.
+     * Compose no observa el companion (state es un @Volatile), así que el ticker
+     * vuelca los flags en este estado observable una vez por segundo, igual que
+     * hace MainActivity.
+     */
+    private var panelState by mutableStateOf(PanelState())
+
+    private val panelTick = object : Runnable {
+        override fun run() {
+            val client = BtServerService.connectedClient
+            panelState = PanelState(
+                link = when {
+                    !BtServerService.isRunning -> Link.OFFLINE
+                    client != null -> Link.CONNECTED
+                    else -> Link.WAITING
+                },
+                clientName = client,
+                armed = state == CaptureState.ARMED,
+                recording = isRecording,
+                streaming = LivestreamService.isStreaming,
+            )
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
     private lateinit var rootLayout: FrameLayout
     private var screenAwake = true
 
@@ -392,7 +422,11 @@ class RecordingActivity : ComponentActivity() {
         overlayView.setContent {
             RecordingOverlay(
                 state = overlayState,
+                // El panel solo se enseña en buffer: grabando mandan el contador
+                // y la capa de reposo, y con la pregunta abierta, la pregunta.
+                panel = panelState.takeIf { it.armed },
                 onAnswer = { send -> resolveUploadPrompt(send) },
+                onSos = { toggleSos() },
             )
         }
         root.addView(overlayView, FrameLayout.LayoutParams(
@@ -400,6 +434,7 @@ class RecordingActivity : ComponentActivity() {
         ))
         setContentView(root)
 
+        mainHandler.post(panelTick)
         registerReceiver(commandReceiver, IntentFilter().apply {
             addAction(ACTION_STOP)
             addAction(ACTION_REC)
@@ -440,6 +475,7 @@ class RecordingActivity : ComponentActivity() {
         mainHandler.removeCallbacks(monitorTick)
         mainHandler.removeCallbacks(elapsedTick)
         mainHandler.removeCallbacks(promptCountdown)
+        mainHandler.removeCallbacks(panelTick)
         monitorJpeg = null
         try {
             window.attributes = window.attributes.apply {
@@ -624,7 +660,9 @@ class RecordingActivity : ComponentActivity() {
             setScreenAwake(true)
         }
         mainHandler.post(monitorTick)
-        HardwareController.ledGreen()
+        // Azul fijo = en buffer. Es la señal pedida por producto: la unidad está
+        // en servicio y guarda los últimos 20 s aunque nadie haya pulsado grabar.
+        HardwareController.ledBlue()
         notifyStateChanged()
         Log.d(TAG, "ARMED — anillo activo")
 
@@ -806,6 +844,22 @@ class RecordingActivity : ComponentActivity() {
         // Si el servicio sigue armado la activity continúa (es el anillo); si no,
         // ya no queda nada que hacer aquí.
         if (!isHoldingCamera && !serviceRequested) finish()
+    }
+
+    /**
+     * SOS desde el panel en buffer. En hilo propio: LivestreamService.start()
+     * desarma y espera hasta 3 s a que el HAL suelte la cámara — en el hilo
+     * principal eso congelaría la UI justo en el momento más crítico.
+     */
+    private fun toggleSos() {
+        Thread {
+            if (LivestreamService.isStreaming) {
+                LivestreamService.stop()
+            } else {
+                PreviewController.stop()
+                LivestreamService.start(applicationContext)
+            }
+        }.start()
     }
 
     // ── Botones físicos ───────────────────────────────────────────────────────

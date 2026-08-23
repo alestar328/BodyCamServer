@@ -173,15 +173,18 @@ class MainActivity : ComponentActivity() {
     // (uid 9001 → null).
     private fun toggleLivestream() {
         if (LivestreamService.isStreaming) {
-            LivestreamService.stop()
+            // En hilo propio: stop() destruye el RtcEngine y rearma el anillo.
+            Thread { LivestreamService.stop() }.start()
         } else {
-            if (RecordingActivity.isRecording) RecordingActivity.stop(this)
-            // Feedback inmediato: Agora tarda en confirmar el join y el botón se
-            // quedaba mudo mientras tanto.
+            // Feedback inmediato: entre ceder la cámara y el join de Agora pasan
+            // segundos, y el botón se quedaba mudo mientras tanto.
             panel = panel.copy(sosConnecting = true)
-            LivestreamService.start(this)
+            // En hilo propio: start() desarma y espera hasta 3 s a que el HAL
+            // suelte la cámara — en el hilo principal congelaría la UI justo en
+            // el momento más crítico. LivestreamService ya cierra la grabación
+            // en curso por su cuenta (yieldCamera).
+            Thread { LivestreamService.start(applicationContext) }.start()
         }
-        refresh()
     }
 
     // ── Botones físicos ───────────────────────────────────────────────────────

@@ -38,8 +38,14 @@ object EvidenceStore {
      */
     const val SEGMENT_BYTES = 8L * 1024 * 1024
 
-    /** Ventana que el anillo garantiza tener disponible al pulsar grabar. */
-    const val PRE_ROLL_MILLIS = 120_000L
+    /**
+     * Ventana que el anillo garantiza tener disponible al pulsar grabar.
+     *
+     * 20 s por requisito de producto (2026-08-23). Como el corte se redondea a
+     * segmento entero (~15 s cada uno), el pre-roll real entregado está entre
+     * 20 y 35 s — siempre de más, nunca de menos.
+     */
+    const val PRE_ROLL_MILLIS = 20_000L
 
     /**
      * Tope duro de segmentos en el anillo. El recorte normal es temporal; este

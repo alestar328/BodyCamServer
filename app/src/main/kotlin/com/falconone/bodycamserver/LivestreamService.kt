@@ -72,7 +72,10 @@ object LivestreamService {
                 override fun onJoinChannelSuccess(channel: String, uid: Int, elapsed: Int) {
                     Log.d(TAG, "Joined $channel uid=$uid")
                     isStreaming = true
-                    HardwareController.ledBlue()
+                    // Amarillo parpadeando = emitiendo (SOS). El azul fijo pasó a
+                    // significar "en buffer" (ver enterArmed) y no pueden compartir
+                    // color: emitir es precisamente cuando NO hay anillo.
+                    HardwareController.ledYellowBlink()
                 }
                 override fun onLeaveChannel(stats: IRtcEngineEventHandler.RtcStats?) {
                     Log.d(TAG, "Left channel")

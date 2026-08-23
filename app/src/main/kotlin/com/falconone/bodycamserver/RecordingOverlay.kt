@@ -107,6 +107,11 @@ internal fun Dp.asFixedSp(): TextUnit = with(LocalDensity.current) { this@asFixe
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 /**
+ * @param panel si no es null, se dibuja el panel de control encima del preview.
+ *   Se usa en ARMED: con el buffer armado esta pantalla tapa a MainActivity
+ *   durante todo el servicio, y el SOS y el estado del enlace tienen que seguir
+ *   a la vista. Es el mismo [ControlPanel] de MainActivity, girado como el resto
+ *   del overlay.
  * @param rotationDegrees expuesto solo para los `@Preview`: pasando 0 se ve el
  *   contenido derecho, como lo lee el agente, en vez de girado como queda en el
  *   framebuffer. En la app siempre va con el valor por defecto.
@@ -115,11 +120,19 @@ internal fun Dp.asFixedSp(): TextUnit = with(LocalDensity.current) { this@asFixe
 fun RecordingOverlay(
     state: OverlayState,
     onAnswer: (Boolean) -> Unit,
+    panel: PanelState? = null,
+    onSos: () -> Unit = {},
     rotationDegrees: Float = OVERLAY_ROTATION_DEGREES,
 ) {
     Box(Modifier.fillMaxSize()) {
-        // Orden = profundidad: el contador queda debajo de la capa de reposo, y la
-        // pregunta por encima de todo. Es el mismo orden que tenían las vistas.
+        // Orden = profundidad: panel de buffer al fondo, contador y capa de
+        // reposo encima, y la pregunta por encima de todo.
+        if (panel != null && state.prompt == null) {
+            Rotated(rotationDegrees) {
+                ControlPanel(state = panel, onSos = onSos)
+            }
+        }
+
         state.elapsed?.let { text ->
             Rotated(rotationDegrees) {
                 ElapsedBadge(text, Modifier.align(Alignment.TopStart))
@@ -283,4 +296,13 @@ private fun PreviewRecording() = RecordingOverlay(
 private fun PreviewPromptRotated() = RecordingOverlay(
     state = OverlayState(prompt = PromptState("INC_20260823_181500", 30)),
     onAnswer = {},
+)
+
+@Preview(name = "5 · En buffer (panel sobre el anillo)", widthDp = PANEL_DP, heightDp = PANEL_DP)
+@Composable
+private fun PreviewArmedPanel() = RecordingOverlay(
+    state = OverlayState(),
+    onAnswer = {},
+    panel = PanelState(link = Link.WAITING, armed = true),
+    rotationDegrees = 0f,
 )
