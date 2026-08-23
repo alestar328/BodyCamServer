@@ -152,6 +152,13 @@ class BtServerService : Service() {
                     }
                 }
                 KeyEvent.KEYCODE_F4 -> executor.execute {
+                    // Rebote del mismo botón que acaba de parar: sin esto se leía
+                    // isRecording=false y arrancaba otra grabación encima de la
+                    // pregunta de envío, con la pantalla apagándose acto seguido.
+                    if (RecordingActivity.ignoreRecordKey()) {
+                        Log.d(TAG, "SideKey F4 descartado: pregunta de envío recién abierta")
+                        return@execute
+                    }
                     if (RecordingActivity.isRecording) {
                         Log.d(TAG, "SideKey F4 → STOP recording")
                         RecordingActivity.stop(context, askUpload = true)

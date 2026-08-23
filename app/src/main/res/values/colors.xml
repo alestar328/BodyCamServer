@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fondo del panel. Duplicado en MainActivity.kt (BG) a propósito: aquí lo
+         necesita windowBackground, que se pinta antes de que Compose exista. -->
+    <color name="panel_bg">#12121C</color>
+</resources>

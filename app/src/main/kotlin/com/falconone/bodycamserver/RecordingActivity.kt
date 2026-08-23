@@ -1,6 +1,5 @@
 package com.falconone.bodycamserver
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -9,7 +8,6 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
-import android.graphics.Typeface
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraCaptureSession
@@ -22,18 +20,19 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ComposeView
 import android.util.Log
-import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
@@ -45,7 +44,14 @@ private const val TAG = "FalconCamera"
 /** Margen para contestar a "Send to the server?" antes de dar por hecho que no. */
 private const val PROMPT_TIMEOUT_MILLIS = 30_000L
 
-class RecordingActivity : Activity() {
+
+/**
+ * Ventana en la que se descarta el rebote del botón que acaba de parar la
+ * grabación. Ver RecordingActivity.ignoreRecordKey().
+ */
+private const val PROMPT_GUARD_MILLIS = 1_500L
+
+class RecordingActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_STOP = "com.falconone.STOP_RECORDING"
@@ -53,6 +59,35 @@ class RecordingActivity : Activity() {
 
         @Volatile var isRecording = false
             private set
+
+        /**
+         * La unidad está esperando respuesta a "Send to the server?".
+         *
+         * Es un estado propio, y no simplemente "no grabando": entre la parada y la
+         * respuesta `isRecording` ya vale false, y los botones físicos leían eso como
+         * "empieza otra grabación".
+         */
+        @Volatile var isAwaitingUploadAnswer = false
+            private set
+
+        @Volatile private var promptOpenedAt = 0L
+
+        /**
+         * ¿Hay que descartar esta pulsación del botón de grabar?
+         *
+         * Cierto durante los primeros [PROMPT_GUARD_MILLIS] con la pregunta abierta:
+         * esa ventana es justo el rebote del mismo botón que acaba de parar la
+         * grabación. `ButtonDebounce` no lo caza porque `mediaRecorder.stop()` bloquea
+         * el hilo principal escribiendo el índice del MP4 bastante más que sus 300 ms,
+         * así que el segundo evento llega con el debounce ya caducado y `isRecording`
+         * en false — y arrancaba una grabación nueva con la pantalla apagada.
+         *
+         * Pasada la ventana, una pulsación deliberada sí vale y cuenta como "no
+         * enviar" (ver onNewIntent).
+         */
+        fun ignoreRecordKey(): Boolean =
+            isAwaitingUploadAnswer &&
+            SystemClock.elapsedRealtime() - promptOpenedAt < PROMPT_GUARD_MILLIS
 
         // Monitor remoto de la grabación: último frame del preview como JPEG,
         // servido por FileServerService en /preview y /preview/stream mientras
@@ -115,9 +150,15 @@ class RecordingActivity : Activity() {
     // pasaría por la pantalla de bloqueo, que es justo lo que no queremos en
     // una bodycam. Así el táctil sigue vivo y un toque devuelve la imagen al
     // instante.
+    /**
+     * Estado del overlay (contador, capa de reposo y pregunta de envío).
+     *
+     * La UI de encima del preview vive en [RecordingOverlay]; aquí solo se publica
+     * el estado. La cámara se queda en Views porque el `TextureView` es la
+     * superficie real de Camera2 y de él se alimenta el monitor remoto.
+     */
+    private var overlayState by mutableStateOf(OverlayState())
     private lateinit var rootLayout: FrameLayout
-    private lateinit var elapsedLabel: TextView
-    private lateinit var screenCover: View
     private var screenAwake = true
 
     // ── Confirmación de envío ─────────────────────────────────────
@@ -128,10 +169,14 @@ class RecordingActivity : Activity() {
     // Sin respuesta se deja de subir, y no lo contrario: subir es la irreversible
     // de las dos acciones, y el video sigue en la unidad para mandarlo luego
     // desde el teléfono.
-    private var uploadPrompt: View? = null
     private var promptFile: File? = null
+    /**
+     * Mientras la pregunta está en pantalla nada puede dormirla ni bajarle el
+     * brillo. Sin esto la capa volvía a ponerse encima de Yes/No y el vídeo se
+     * resolvía solo, por vencimiento del contador, sin que nadie contestara.
+     */
+    private var promptHoldsScreen = false
     private var promptDeadline = 0L
-    private lateinit var promptHint: TextView
 
     /**
      * Origen del contador, en reloj monótono.
@@ -190,8 +235,10 @@ class RecordingActivity : Activity() {
     private fun updateElapsedLabel() {
         val millis = SystemClock.elapsedRealtime() - recordingStartElapsed
         val total = (millis / 1000).coerceAtLeast(0)
-        elapsedLabel.text = String.format(
-            Locale.US, "● REC  %02d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60
+        overlayState = overlayState.copy(
+            elapsed = String.format(
+                Locale.US, "● REC  %02d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60
+            )
         )
     }
 
@@ -203,13 +250,29 @@ class RecordingActivity : Activity() {
      * se alimenta justamente de esta vista.
      */
     private fun setScreenAwake(awake: Boolean) {
+        // Con la pregunta abierta el reposo queda vetado: un toque perdido no
+        // puede dejar los botones debajo de la capa.
+        if (promptHoldsScreen && !awake) {
+            Log.d(TAG, "Reposo ignorado: la pregunta de envío está en pantalla")
+            return
+        }
         screenAwake = awake
-        screenCover.visibility = if (awake) View.GONE else View.VISIBLE
-        elapsedLabel.visibility = if (awake && isRecording) View.VISIBLE else View.GONE
+        overlayState = overlayState.copy(
+            covered = !awake,
+            // Con la capa puesta nadie lee el contador, y su origen es un instante
+            // fijo: al volver muestra el valor correcto sin haber ido contando.
+            elapsed = if (awake && isRecording) overlayState.elapsed else null,
+        )
 
         window.attributes = window.attributes.apply {
-            screenBrightness =
-                if (awake) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else 0f
+            // Para la pregunta se fuerza el brillo al máximo en vez de devolvérselo
+            // al sistema: con auto-brillo en un entorno oscuro, BRIGHTNESS_OVERRIDE_NONE
+            // deja la pantalla casi negra y el popup se da por invisible.
+            screenBrightness = when {
+                !awake -> 0f
+                promptHoldsScreen -> 1f
+                else -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
         }
 
         mainHandler.removeCallbacks(elapsedTick)
@@ -226,7 +289,7 @@ class RecordingActivity : Activity() {
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         // Con la pregunta en pantalla los toques son de sus botones: si los
         // consumiéramos aquí, Yes/No no se podrían pulsar.
-        if (uploadPrompt != null) return super.dispatchTouchEvent(ev)
+        if (overlayState.prompt != null) return super.dispatchTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) setScreenAwake(!screenAwake)
         return true
     }
@@ -243,32 +306,33 @@ class RecordingActivity : Activity() {
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
 
+        // Sin esto el sistema le reserva sitio a la barra de navegación y la
+        // ventana queda más estrecha que la pantalla: la capa girada cubría bien
+        // la ventana, pero se veía un margen lateral junto a la pregunta de envío.
+        goImmersive()
+
         // TextureView real — HAL de cámara necesita surface de foreground app
         textureView = TextureView(this)
-
-        elapsedLabel = TextView(this).apply {
-            textSize = 22f
-            setTextColor(Color.parseColor("#ff5555"))
-            typeface = Typeface.MONOSPACE
-            setShadowLayer(6f, 0f, 0f, Color.BLACK)  // legible sobre cualquier escena
-            setPadding(28, 20, 28, 20)
-            text = "● REC  00:00:00"
-        }
-
-        screenCover = View(this).apply {
-            setBackgroundColor(Color.BLACK)
-            visibility = View.GONE
-        }
 
         val root = FrameLayout(this).also { rootLayout = it }
         root.addView(textureView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
-        root.addView(elapsedLabel, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply { gravity = Gravity.TOP or Gravity.START })
-        // La capa va la última: tapa preview y contador de una vez.
-        root.addView(screenCover, FrameLayout.LayoutParams(
+        // Todo lo que va encima del preview (contador, capa de reposo, pregunta de
+        // envío) es Compose y vive en RecordingOverlay. El TextureView se queda
+        // como View: es la superficie real de Camera2 y de ella copia sus frames
+        // el monitor remoto, así que no gana nada envuelta en un AndroidView.
+        val overlayView = ComposeView(this)
+        overlayView.setContent {
+            RecordingOverlay(
+                state = overlayState,
+                onAnswer = { send ->
+                    resolveUploadPrompt(send)
+                    finish()
+                },
+            )
+        }
+        root.addView(overlayView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
         setContentView(root)
@@ -407,7 +471,17 @@ class RecordingActivity : Activity() {
     }
 
     private fun stopAndFinish(askUpload: Boolean = false) {
-        if (!isRecording) { finish(); return }
+        if (!isRecording) {
+            // Parada repetida: rebote del botón físico, o el teléfono mandando su
+            // propio REC_STOP. Con la pregunta abierta, finish() se la llevaba por
+            // delante antes de que se pudiera pulsar Yes/No — este era el motivo
+            // real de que el popup "desapareciera" al cortar la grabación.
+            if (overlayState.prompt != null) {
+                Log.d(TAG, "Parada redundante con la pregunta abierta → ignorada")
+                return
+            }
+            finish(); return
+        }
         Log.d(TAG, "stopAndFinish askUpload=$askUpload")
         isRecording = false
         mainHandler.removeCallbacks(monitorTick)
@@ -459,78 +533,24 @@ class RecordingActivity : Activity() {
                 finish()
                 return
             }
-            promptHint.text = "No answer in ${left}s = No"
+            overlayState = overlayState.copy(prompt = overlayState.prompt?.copy(secondsLeft = left))
             mainHandler.postDelayed(this, 1000L)
         }
     }
 
     private fun showUploadPrompt(file: File) {
         promptFile = file
+        promptHoldsScreen = true
+        isAwaitingUploadAnswer = true
+        promptOpenedAt = SystemClock.elapsedRealtime()
         setScreenAwake(true)  // la pregunta no sirve de nada con la capa puesta
 
-        promptHint = TextView(this).apply {
-            textSize = 12f
-            setTextColor(Color.parseColor("#aaaaaa"))
-            gravity = Gravity.CENTER
-        }
-
-        val question = TextView(this).apply {
-            text = "Send to the server?"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(16, 0, 16, 20)
-        }
-
-        val name = TextView(this).apply {
-            text = file.name
-            textSize = 12f
-            setTextColor(Color.parseColor("#888888"))
-            gravity = Gravity.CENTER
-            setPadding(16, 0, 16, 20)
-        }
-
-        fun answerButton(label: String, color: String, send: Boolean) = Button(this).apply {
-            text = label
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor(color))
-            setOnClickListener {
-                resolveUploadPrompt(send)
-                finish()
-            }
-        }
-
-        val buttons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            val weighted = {
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    .apply { setMargins(12, 0, 12, 0) }
-            }
-            addView(answerButton("Yes", "#2e7d32", true), weighted())
-            addView(answerButton("No", "#5a5a5a", false), weighted())
-        }
-
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#e6000000"))
-            setPadding(20, 20, 20, 20)
-            addView(question)
-            addView(name)
-            addView(buttons, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ))
-            addView(promptHint, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 20 })
-        }
-
-        rootLayout.addView(panel, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-        uploadPrompt = panel
+        overlayState = overlayState.copy(
+            prompt = PromptState(
+                fileName = file.name,
+                secondsLeft = (PROMPT_TIMEOUT_MILLIS / 1000).toInt(),
+            )
+        )
 
         promptDeadline = SystemClock.elapsedRealtime() + PROMPT_TIMEOUT_MILLIS
         mainHandler.post(promptCountdown)
@@ -541,9 +561,10 @@ class RecordingActivity : Activity() {
     private fun resolveUploadPrompt(send: Boolean) {
         val file = promptFile ?: return
         promptFile = null
+        promptHoldsScreen = false
+        isAwaitingUploadAnswer = false
         mainHandler.removeCallbacks(promptCountdown)
-        uploadPrompt?.let { rootLayout.removeView(it) }
-        uploadPrompt = null
+        overlayState = overlayState.copy(prompt = null)
         if (send) {
             Log.d(TAG, "Prompt → SÍ, subiendo ${file.name}")
             UploadService.start(applicationContext, file.absolutePath)
@@ -562,10 +583,17 @@ class RecordingActivity : Activity() {
      */
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        if (uploadPrompt == null) return
+        if (overlayState.prompt == null) return
         Log.d(TAG, "Nueva grabación con la pregunta abierta → no se envía")
         resolveUploadPrompt(send = false)
         openCamera()
+    }
+
+    // El sistema restaura las barras al recuperar el foco (vuelta del diálogo de
+    // permisos, o de otra activity): hay que volver a esconderlas.
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) goImmersive()
     }
 
     // F4 while recording → stop. All other buttons pass through.
@@ -580,6 +608,9 @@ class RecordingActivity : Activity() {
 
     override fun onDestroy() {
         isRecording = false
+        // Si la activity muere con la pregunta puesta, el flag se quedaría a true y
+        // el botón de grabar dejaría de responder.
+        isAwaitingUploadAnswer = false
         // Red de seguridad: si stop() lanzó, el latido seguiría vivo sobre un
         // grabador ya muerto.
         watch?.onStopped()

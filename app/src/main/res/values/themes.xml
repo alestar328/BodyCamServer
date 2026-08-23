@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Tema del panel de control.
+
+        MainActivity no declaraba tema y heredaba el del sistema, que trae
+        ActionBar: en la unidad salía una barra clara con el android:label
+        ("FalconOne Server") comiéndose la parte de arriba de una pantalla de
+        3 cm. Sumado a la barra de estado y a la de navegación, el panel se
+        quedaba con poco más de la mitad del alto.
+
+        Fullscreen quita la barra de estado; la de navegación la quita el modo
+        inmersivo desde código (ver MainActivity.goImmersive).
+
+        windowBackground al color del panel evita el fogonazo blanco del arranque.
+    -->
+    <style name="Theme.FalconPanel" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/panel_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+</resources>

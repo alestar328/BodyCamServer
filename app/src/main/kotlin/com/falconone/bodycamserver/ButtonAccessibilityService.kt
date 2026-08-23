@@ -28,6 +28,16 @@ class ButtonAccessibilityService : AccessibilityService() {
         Log.d(TAG, "KeyEvent: ${event.keyCode}")
         return when (event.keyCode) {
             KeyEvent.KEYCODE_F2 -> {
+                // Debounce compartido: el botón físico rebota y llegaban dos
+                // paradas seguidas. La segunda caía en stopAndFinish() con
+                // isRecording ya en false y cerraba la pregunta de envío.
+                if (!ButtonDebounce.tryAcquire()) return true
+                // Mismo rebote que en sideKeyReceiver: con la pregunta de envío
+                // recién abierta esta pulsación es el eco de la que la abrió.
+                if (RecordingActivity.ignoreRecordKey()) {
+                    Log.d(TAG, "F2 descartado: pregunta de envío recién abierta")
+                    return true
+                }
                 if (RecordingActivity.isRecording) {
                     Log.d(TAG, "F2 → STOP recording")
                     RecordingActivity.stop(this, askUpload = true)
