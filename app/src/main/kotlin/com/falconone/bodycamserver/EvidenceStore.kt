@@ -14,8 +14,8 @@ private const val TAG = "FalconStore"
 /**
  * Dueño del layout en disco de la evidencia capturada.
  *
- *     FalconOne/buffer/            anillo pre-evento, se borra solo
- *     FalconOne/incidents/<id>/    evidencia promovida, el anillo NUNCA la toca
+ *     FalconOne/buffer/            anillo pre-evento (SEG_<epoch>.mp4), se borra solo
+ *     FalconOne/incidents/<id>/    evidencia promovida (<placa>_<fecha>_<hora>.mp4)
  *     FalconOne/VID_*.mp4          grabaciones del modelo anterior, intactas
  *     FalconOne/IMG_*.jpg          fotos, intactas
  *
@@ -76,8 +76,39 @@ object EvidenceStore {
 
     fun bufferSegments(): List<File> = segmentsIn(bufferDir)
 
-    fun startMillisOf(segment: File): Long =
-        segment.name.removePrefix(SEGMENT_PREFIX).removeSuffix(SEGMENT_SUFFIX).toLongOrNull() ?: 0L
+    /**
+     * Instante de inicio de un segmento, leído de su nombre.
+     *
+     * Dos formatos conviven: `SEG_<epoch>.mp4` en el anillo (precisión de
+     * milisegundo — de aquí salen el orden y el recorte del pre-roll) y
+     * `<placa>_<yyyyMMdd>_<HHmmss>.mp4` en la evidencia ya adoptada (precisión
+     * de segundo, suficiente para los offsets del manifest).
+     */
+    fun startMillisOf(segment: File): Long {
+        val name = segment.name
+        if (name.startsWith(SEGMENT_PREFIX)) {
+            return name.removePrefix(SEGMENT_PREFIX).removeSuffix(SEGMENT_SUFFIX).toLongOrNull() ?: 0L
+        }
+        val stamp = Regex("""(\d{8}_\d{6})""").find(name)?.groupValues?.get(1) ?: return 0L
+        return try {
+            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(stamp)?.time ?: 0L
+        } catch (_: Exception) { 0L }
+    }
+
+    /**
+     * Nombre definitivo de un fichero de evidencia: placa del oficial, fecha y
+     * hora de inicio del segmento. Ordenar por nombre sigue siendo ordenar
+     * cronológicamente, porque dentro de un incidente la placa es la misma.
+     *
+     * TODO: integrar con datos reales — la placa sale de [HardcodedOfficer]
+     * hasta que exista la sesión autenticada del oficial (ver Officer.kt).
+     */
+    fun evidenceName(startMillis: Long): String =
+        "%s_%s%s".format(
+            HardcodedOfficer.badge,
+            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startMillis)),
+            SEGMENT_SUFFIX,
+        )
 
     /**
      * Descarta los segmentos que ya quedan por detrás de la ventana de pre-roll.
@@ -133,8 +164,12 @@ object EvidenceStore {
         incidentsDir.listFiles { f -> f.isDirectory }
             ?.map { it.name }?.sortedDescending() ?: emptyList()
 
+    /** Todo .mp4 del incidente, en orden cronológico. Acepta tanto los nombres
+     *  nuevos (placa_fecha_hora) como los SEG_ de incidentes antiguos. */
     fun incidentSegments(incidentId: String): List<File> =
-        segmentsIn(File(incidentsDir, incidentId))
+        File(incidentsDir, incidentId)
+            .listFiles { f -> f.isFile && f.name.endsWith(SEGMENT_SUFFIX) }
+            ?.sortedBy { it.name } ?: emptyList()
 
     /**
      * Mueve al incidente los segmentos sellados que cubren la ventana de pre-roll
@@ -184,11 +219,24 @@ object EvidenceStore {
         bufferSegments().mapNotNull { adoptIntoIncident(incidentId, it) }
 
     /**
-     * Mueve un segmento ya sellado del anillo al incidente. Es la única vía por
-     * la que un fichero sale de buffer/, y solo se invoca sobre ficheros cerrados.
+     * Mueve un segmento ya sellado del anillo al incidente y le da su nombre
+     * definitivo de evidencia (placa_fecha_hora). Es la única vía por la que un
+     * fichero sale de buffer/, y solo se invoca sobre ficheros cerrados — el
+     * renombrado es el mismo renameTo del traslado, sin coste extra.
      */
     fun adoptIntoIncident(incidentId: String, segment: File): File? {
-        val dest = File(incidentDir(incidentId), segment.name)
+        val start = startMillisOf(segment)
+        var dest = File(incidentDir(incidentId), evidenceName(start))
+        if (dest.exists()) {
+            // Dos segmentos arrancando en el mismo segundo: imposible con segmentos
+            // de ~15 s, pero un nombre pisado destruiría evidencia. Se desambigua
+            // con los milisegundos y listo.
+            dest = File(
+                incidentDir(incidentId),
+                dest.name.removeSuffix(SEGMENT_SUFFIX) +
+                    "_%03d%s".format(start % 1000, SEGMENT_SUFFIX)
+            )
+        }
         return if (segment.renameTo(dest)) {
             dest
         } else {
