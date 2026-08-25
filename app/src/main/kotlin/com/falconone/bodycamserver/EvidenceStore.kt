@@ -298,6 +298,7 @@ object EvidenceStore {
         armedAtMillis: Long,
         triggerMillis: Long,
         stoppedMillis: Long,
+        sealed: EvidenceCrypto.Sealed? = null,
     ) {
         val segments = incidentSegments(incidentId)
         val origin = segments.firstOrNull()?.let { startMillisOf(it) } ?: triggerMillis
@@ -342,6 +343,26 @@ object EvidenceStore {
             put("trigger_offset_ms", triggerMillis - origin)
             put("segment_count", segments.size)
             put("segments", arr)
+
+            // Cadena de custodia. sha256_plain identifica el vídeo con independencia
+            // de cómo se haya cifrado; sha256_cipher permite verificar la subida sin
+            // tener ninguna clave. recipients dice quién puede volver a abrirlo.
+            // Formato del .fev: docs/CRYPTO-FORMAT.md.
+            sealed?.let { s ->
+                put("crypto", JSONObject().apply {
+                    put("format", "FEVD1")
+                    put("algorithm", "AES-256-GCM")
+                    put("chunk_bytes", EvidenceCrypto.CHUNK)
+                    put("encrypted_filename", s.file.name)
+                    put("encrypted_bytes", s.cipherBytes)
+                    put("sha256_plain", s.plainSha256)
+                    put("sha256_cipher", s.cipherSha256)
+                    put("plain_bytes", s.plainBytes)
+                    put("plain_retained", !EvidenceCrypto.DELETE_PLAINTEXT)
+                    put("elapsed_ms", s.elapsedMillis)
+                    put("recipients", JSONArray(s.recipients))
+                })
+            }
         }
 
         try {

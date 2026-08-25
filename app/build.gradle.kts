@@ -11,8 +11,8 @@ android {
         applicationId = "com.falconone.bodycamserver"
         minSdk = 26
         targetSdk = 28
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     compileOptions {
@@ -26,6 +26,14 @@ android {
         release {
             isMinifyEnabled = false
         }
+    }
+
+    lint {
+        // La app se instala por adb en la unidad bodycam, no se distribuye por
+        // Google Play: el minimo de targetSdk 33 que exige la tienda no aplica.
+        // targetSdk 28 es deliberado (almacenamiento legacy y los servicios sin
+        // foregroundServiceType, ver AndroidManifest).
+        disable.add("ExpiredTargetSdkVersion")
     }
 
     buildFeatures {

@@ -288,15 +288,24 @@ class RecordingActivity : ComponentActivity() {
     }
 
     /**
-     * Ensambla el incidente en un hilo propio y, al terminar, escribe el
-     * manifest (ya sobre el vídeo único), lo anuncia a la galería y desbloquea
-     * la subida. Va fuera del hilo principal: coser un incidente largo son
-     * segundos de I/O y el anillo ya está rearmándose por debajo.
+     * Ensambla el incidente en un hilo propio y, al terminar, cifra el vídeo,
+     * escribe el manifest (ya sobre el vídeo único, con los hashes dentro), lo
+     * anuncia a la galería y desbloquea la subida. Va fuera del hilo principal:
+     * coser un incidente largo son segundos de I/O y el anillo ya está
+     * rearmándose por debajo.
+     *
+     * El cifrado va aquí y no durante la grabación por dos razones: la unidad ya
+     * se calienta grabando, y hasta el ensamblado no existe el fichero definitivo
+     * sobre el que tiene sentido calcular el hash de custodia. Si falla, el
+     * incidente sigue su curso sin cifrar —perder la evidencia sería peor— y el
+     * manifest sale sin bloque `crypto`, que es justo la señal a revisar.
      */
     private fun finalizeIncidentAsync(id: String, armedAt: Long, trigger: Long, stopped: Long) {
         Thread {
             val file = IncidentAssembler.assemble(id)
-            EvidenceStore.writeManifest(id, armedAt, trigger, stopped)
+            val sealed = file?.let { EvidenceCrypto.seal(it) }
+            if (file != null && sealed == null) Log.e(TAG, "$id quedó SIN cifrar")
+            EvidenceStore.writeManifest(id, armedAt, trigger, stopped, sealed)
             file?.let {
                 MediaScannerConnection.scanFile(
                     applicationContext, arrayOf(it.absolutePath), arrayOf("video/mp4"), null
