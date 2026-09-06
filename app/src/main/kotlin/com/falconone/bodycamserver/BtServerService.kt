@@ -53,6 +53,13 @@ class BtServerService : Service() {
     private var serverSocket: BluetoothServerSocket? = null
     private var clientSocket: BluetoothSocket? = null
     private var output: OutputStream? = null
+
+    /** Intercambio del workflow 31 de la conexion en curso. Null si no hay cliente. */
+    private var emparejamiento: EmparejamientoDeLaBodycam? = null
+
+    /** A quien sirve la camara en esta conexion (workflows 33 y 34). */
+    private var binding: BindingAgente? = null
+
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var wifiLock: WifiManager.WifiLock
 
@@ -286,6 +293,10 @@ class BtServerService : Service() {
 
     private fun handleClient(socket: BluetoothSocket) {
         val reader = BufferedReader(InputStreamReader(socket.inputStream))
+        // Un intercambio por conexion: el nonce vale para esta y solo esta, que es
+        // lo que impide reutilizar una respuesta capturada de otra sesion.
+        emparejamiento = EmparejamientoDeLaBodycam(this)
+        binding = BindingAgente(this)
         try {
             var line: String?
             while (reader.readLine().also { line = it } != null) {
@@ -302,6 +313,10 @@ class BtServerService : Service() {
             }
         } finally {
             connectedClient = null
+            emparejamiento = null
+            // La atadura no sobrevive al enlace: mientras no hay telefono, la
+            // camara no esta al servicio de nadie.
+            binding = null
             closeClient()
             // Sin teléfono nadie mira el visor: se libera la cámara para no
             // drenar batería. Si el enlace vuelve, el teléfono lo reabre.
@@ -312,6 +327,11 @@ class BtServerService : Service() {
     }
 
     private fun processCommand(raw: String): String {
+        // El emparejamiento se atiende antes de registrar nada: la linea lleva
+        // certificados en base64 y llenaria el log de ruido en cada conexion.
+        if (raw.startsWith("AUTH_")) return procesarEmparejamiento(raw)
+        if (raw.startsWith("BIND") || raw.startsWith("UNBIND")) return procesarAtadura(raw)
+
         Log.d(TAG, "CMD: $raw")
         val parts = raw.split(":")
         return when (parts[0].uppercase()) {
@@ -434,6 +454,52 @@ class BtServerService : Service() {
             Cmd.TORCH_OFF -> { TorchController.turnOff(); Rsp.ok(Cmd.TORCH_OFF) }
 
             else -> Rsp.error("Comando desconocido: $raw")
+        }
+    }
+
+    /**
+     * Emparejamiento autenticado con el telefono (workflow 31).
+     *
+     * QUE PASA SI NO SE AUTENTICA, dicho aqui para que se vea al leerlo: hoy
+     * **no se cierra la conexion**. Hay telefonos en campo con la version anterior
+     * de Aeria Nexus que no conocen el intercambio, y cortarles el enlace los
+     * dejaria sin camara sin haber ganado nada. Se registra y se sigue.
+     *
+     * En cuanto todos los terminales lleven la version nueva, esto se invierte:
+     * un cliente que no se acredite no debe poder mandar REC_STOP ni STATUS.
+     * El sitio para ese cambio es processCommand, comprobando
+     * `emparejamiento?.telefonoAutenticado` antes del `when`.
+     */
+    private fun procesarEmparejamiento(raw: String): String {
+        val enCurso = emparejamiento ?: return Rsp.error("Emparejamiento fuera de conexion")
+        return when {
+            raw.startsWith("AUTH_HELLO") -> enCurso.responderASaludo(raw)
+            raw.startsWith("AUTH_PROOF") ->
+                enCurso.responderAPrueba(raw, BodycamIdentity.anclaDeConfianza(this))
+            else -> Rsp.error("Paso de emparejamiento desconocido")
+        }
+    }
+
+    /**
+     * Atadura agente-camara (workflows 33 y 34).
+     *
+     * Solo se atiende con el telefono ya acreditado: aceptar una atadura de alguien
+     * que no ha demostrado quien es seria dejar que cualquiera ponga la camara al
+     * servicio de un agente inventado.
+     */
+    private fun procesarAtadura(raw: String): String {
+        val enCurso = emparejamiento
+        val actual = binding
+        if (enCurso == null || actual == null) return Rsp.error("Atadura fuera de conexion")
+        if (enCurso.telefonoAutenticado == null) {
+            return "BIND_FAIL:el telefono no se ha acreditado\n"
+        }
+
+        val ancla = BodycamIdentity.anclaDeUsuario(this)
+        return if (raw.startsWith("UNBIND")) {
+            actual.deshacer(raw, ancla, enCurso.certificadoDelTelefono)
+        } else {
+            actual.atender(raw, enCurso.nonce, ancla)
         }
     }
 

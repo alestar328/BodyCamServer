@@ -59,7 +59,7 @@ la cabecera, una vez por cada destinatario que deba poder abrirla.
 | `id` | Quién descifra | Estado |
 |---|---|---|
 | `ks:<alias>` | La propia unidad. DEK envuelta con una clave AES-256 de AndroidKeyStore que no sale del chip. `blob` = IV(12) ‖ ciphertext ‖ tag(16). | **Implementado.** Permite reproducción local. |
-| `srv:<kid>` | El servidor Nexus. DEK envuelta con su **clave pública** RSA-OAEP(SHA-256). Una clave pública en el APK no es una filtración: es su sitio natural. | **Seam listo, desactivado** hasta que el manager entregue la pública (decisión de custodia pendiente). |
+| `srv:<kid>` | El servidor Nexus. DEK envuelta con su **clave pública** RSA-OAEP(SHA-256). Una clave pública en el APK no es una filtración: es su sitio natural. | **Activo con clave de desarrollo** (`kid` = `dev-2026-08`) para poder subir y abrir el `.fev` de extremo a extremo. La pública real sigue pendiente de la decisión de custodia; sustituirla es cambiar dos constantes en `EvidenceKeys.kt`. Cualquier fichero cifrado para un `kid` que empiece por `dev-` es material de pruebas. |
 
 Con los dos envoltorios presentes esto es la opción **C (híbrido)** de
 `Seguridad-Claves-Bodycam.md` §3.5. Con solo `srv:` es la **B**. Añadir o quitar
@@ -113,8 +113,14 @@ el claro mientras la política de retención lo permita.
 
 El borrado del MP4 en claro tras cifrar está **detrás de una constante, hoy en
 `false`** (`EvidenceCrypto.DELETE_PLAINTEXT`), porque EVD-007 sigue pendiente de
-decisión y porque la galería y la subida actuales leen el claro. Es un cambio de una
-línea cuando se decida.
+decisión y porque la galería local sigue leyendo el claro. Es un cambio de una línea
+cuando se decida.
+
+La subida ya **no** lee el claro: desde que el destinatario `srv:` está activo,
+`UploadService` sube el `.fev` y solo cae al MP4 si el cifrado falló al cerrar el
+incidente (ver `docs/UPLOAD-PROTOCOL.md`). La condición para poder borrar el claro
+con seguridad es la verificación del servidor: hasta que confirma `sha256_cipher`,
+la evidencia no está entregada.
 
 ## 8. Coste medido (unidad real, grabación de 20 min / 473 MB)
 

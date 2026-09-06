@@ -116,6 +116,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        if (BuildConfig.DEBUG) atenderAltaDeIdentidadDebug(intent)
+
         goImmersive()
 
         setContent {
@@ -123,7 +125,15 @@ class MainActivity : ComponentActivity() {
         }
 
         requestPermissions()
-        if (allPermissionsGranted()) startService()
+        if (allPermissionsGranted()) {
+            startService()
+            // Reanuda las subidas que quedaron a medias. Va aquí y no solo en
+            // BootReceiver porque el firmware de esta unidad bloquea el arranque
+            // automático en background (verificado el 2026-08-26: BOOT_COMPLETED
+            // entra en la cola de background y nunca llega al receptor). Abrir la
+            // app sí ocurre siempre, así que es el disparador fiable.
+            UploadService.resumePending(applicationContext)
+        }
 
         registerReceiver(
             recordingReceiver,
@@ -443,3 +453,71 @@ private fun PreviewOffline() = ControlPanel(
     PanelState(link = Link.CONNECTED, clientName = "Samsung Galaxy S24 Ultra de Alejandro"),
     onSos = {},
 )
+
+/**
+ * Alta de la identidad de la bodycam por intent (workflows 13 y 31).
+ *
+ * La W1 tiene una pantalla de 3 cm y ningun sitio donde pulsar nada: el alta se
+ * conduce desde el PC con `adb`, igual que la del telefono. Lo automatiza
+ * `tools/alta-bodycam.sh` en el repositorio de Aeria Nexus, que es donde vive la
+ * CA de pruebas.
+ *
+ *     # 1. generar la clave y dejar el CSR donde se pueda recoger
+ *     adb shell am start -n com.falconone.bodycamserver/.MainActivity --es bwc_enroll 1
+ *     adb shell run-as com.falconone.bodycamserver cat files/identity/bwc.csr.pem
+ *
+ *     # 2. devolver el certificado emitido y el ancla con la que validar al telefono
+ *     adb shell am start -n com.falconone.bodycamserver/.MainActivity  *         --es bwc_cert "$(base64 -w0 bwc.crt)" --es bwc_anchor "$(base64 -w0 ca.crt)"
+ *
+ * Solo se llama bajo BuildConfig.DEBUG. En una unidad de produccion esto lo hara
+ * el canal de aprovisionamiento, que todavia no existe.
+ */
+private fun android.app.Activity.atenderAltaDeIdentidadDebug(intent: android.content.Intent) {
+    val etiqueta = "BwcAlta"
+
+    if (intent.getStringExtra("bwc_enroll") != null) {
+        runCatching {
+            // El reto deberia venir del backend. Sin el, la cadena de atestacion
+            // sale bien formada y NO prueba frescura; es la misma costura que
+            // tenia el telefono antes del servicio de retos.
+            val reto = intent.getStringExtra("bwc_challenge")
+                ?.let { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
+            BodycamIdentity.generarPar(reto)
+            val csr = BodycamIdentity.crearCsr(this)
+            BodycamIdentity.guardarCsr(this, csr)
+            android.util.Log.i(etiqueta, "CSR de ${BodycamIdentity.bwcId(this)} listo" +
+                if (reto == null) " (reto local: NO prueba frescura)" else " (con reto del backend)")
+        }.onFailure { android.util.Log.e(etiqueta, "No se pudo preparar el alta", it) }
+    }
+
+    intent.getStringExtra("bwc_anchor")?.let { enBase64 ->
+        runCatching {
+            val pem = String(android.util.Base64.decode(enBase64, android.util.Base64.DEFAULT))
+            BodycamIdentity.instalarAncla(this, pem)
+        }.onFailure { android.util.Log.e(etiqueta, "No se pudo instalar el ancla", it) }
+    }
+
+    intent.getStringExtra("bwc_user_anchor")?.let { enBase64 ->
+        runCatching {
+            val pem = String(android.util.Base64.decode(enBase64, android.util.Base64.DEFAULT))
+            BodycamIdentity.instalarAnclaDeUsuario(this, pem)
+        }.onFailure { android.util.Log.e(etiqueta, "No se pudo instalar el ancla de usuario", it) }
+    }
+
+    intent.getStringExtra("bwc_cert")?.let { enBase64 ->
+        runCatching {
+            val pem = String(android.util.Base64.decode(enBase64, android.util.Base64.DEFAULT))
+            val certificado = BodycamIdentity.instalarCertificado(pem)
+            // Prueba de posesion contra el certificado recien puesto: si verifica,
+            // la clave del Keystore y la que certifico la CA son el mismo par.
+            val reto = "prueba-de-posesion".toByteArray()
+            val firma = BodycamIdentity.firmar(reto)
+            val valida = java.security.Signature.getInstance(Pkcs10.ALGORITMO_FIRMA).run {
+                initVerify(certificado.publicKey); update(reto); verify(firma)
+            }
+            android.util.Log.i(etiqueta, "Certificado instalado para ${certificado.subjectX500Principal}")
+            android.util.Log.i(etiqueta, "Emitido por ${certificado.issuerX500Principal}")
+            android.util.Log.i(etiqueta, "Prueba de posesion: $valida")
+        }.onFailure { android.util.Log.e(etiqueta, "No se pudo instalar el certificado", it) }
+    }
+}

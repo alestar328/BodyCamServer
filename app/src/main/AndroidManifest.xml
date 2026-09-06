@@ -27,7 +27,13 @@
     <application
         android:label="FalconOne Server"
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic: con targetSdk 28 el HTTP en claro sale bloqueado
+             por defecto, y la subida por bloques se desarrolla contra el stub de
+             tools/tus_stub_server.py, que va por HTTP en la LAN. La app ya sirve
+             HTTP sin cifrar (NanoHTTPD) en esa misma red.
+             TODO: quitar esto cuando la subida apunte al endpoint HTTPS de Nexus. -->
 
         <activity
             android:name=".MainActivity"

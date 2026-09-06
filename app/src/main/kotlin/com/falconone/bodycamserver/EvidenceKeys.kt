@@ -155,11 +155,22 @@ object DeviceKeyWrapper : KeyWrapper {
  * filtración, es su sitio natural, y elimina de raíz el problema de los secretos en
  * el APK en vez de mitigarlo.
  *
- * TODO: pendiente de que el manager entregue la pública de Nexus y su kid (decisión
- * 1 del plan de la semana 24-30 ago). Hasta entonces [PUBLIC_KEY_B64] está vacío,
- * [fromApk] devuelve null y este destinatario no aparece en la cabecera. Cuando
- * llegue: pegar aquí el SPKI en base64 y ya está — no hay que tocar ni el formato
- * ni [EvidenceCrypto].
+ * ── Hoy va con una clave de DESARROLLO ────────────────────────────────────────
+ *
+ * La pública real de Nexus sigue pendiente (decisión 1 del plan de la semana 24-30
+ * ago): la genera ciberseguridad en su infraestructura y nos entrega solo la
+ * pública, porque quien tenga la privada puede descifrar toda la evidencia y eso
+ * no puede acabar en manos del proveedor de software.
+ *
+ * Mientras tanto, y siguiendo lo que pidió backend —stubs en vez de bloqueos—, aquí
+ * hay un par RSA-2048 de usar y tirar cuyo `kid` empieza por `dev-`. Con él la DEK
+ * viaja también envuelta para "el servidor", que es lo que permite subir el `.fev`
+ * y que el destinatario lo abra con `tools/falcon_evidence_decrypt.py`. La privada
+ * está en `tools/dev-keys/`, fuera del control de versiones.
+ *
+ * **El `kid` es la salvaguarda:** cualquier cosa cifrada para `dev-*` es material
+ * de pruebas por definición. Sustituir la clave el día que llegue la real es pegar
+ * dos constantes aquí; no toca ni el formato ni [EvidenceCrypto].
  */
 class NexusKeyWrapper private constructor(
     private val kid: String,
@@ -187,8 +198,15 @@ class NexusKeyWrapper private constructor(
     override fun unwrap(blob: ByteArray): ByteArray? = null
 
     companion object {
-        private const val KEY_ID = ""
-        private const val PUBLIC_KEY_B64 = ""
+        /** El prefijo `dev-` marca que esto NO es la clave de producción. */
+        private const val KEY_ID = "dev-2026-08"
+
+        private const val PUBLIC_KEY_B64 =
+            "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApfQAeE9GxRa0424gB/zK7OB32ssLrslezEx3" +
+            "ewMxOHPgKo7nPYvXGxcq9Wh2e3vfNyo1QkNpyVGF1J1cKieBEVEwZIpJT8INFQotwmTGzVOjqogRb9r4" +
+            "giRW1AugkrA2rDNkRR/s5/770PuvrxDE/2F7PcMMQlBL/Dl+Tl6/l1zYb51QMvJ89w/eku7TAe7aD4Cx" +
+            "9/lOaG0IQKqRd/zeuG0hubLDJC8ND9ARy8a47K9/Vgnl3uhrlE01HU37muzhbOCyMB9dxlZ6fLjTtfKG" +
+            "VctsxIyD62iOYlQJ6XJJfbLv4HsxNZTz1iwnB11FXgKnbps/NXAdOPfYz5pyo7wSuQIDAQAB"
 
         fun fromApk(): NexusKeyWrapper? {
             if (PUBLIC_KEY_B64.isBlank() || KEY_ID.isBlank()) return null

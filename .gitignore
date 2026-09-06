@@ -18,3 +18,10 @@ local.properties
 build/
 *.apk
 *.aab
+
+# Claves de desarrollo del destinatario srv: (ver EvidenceKeys.kt)
+tools/dev-keys/
+
+# Keystore de firma: vive fuera del repo (ver local.properties). Por si acaso.
+*.jks
+*.keystore

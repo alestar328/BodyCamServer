@@ -1,6 +1,18 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Ruta y contrasenas del keystore de release, leidas de local.properties, que no
+// va a git. Mismo keystore que AeriaNexusPrototype: una sola identidad de firma
+// para las dos apps del proyecto.
+val localProperties = Properties().apply {
+    val archivo = rootProject.file("local.properties")
+    if (archivo.exists()) {
+        archivo.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -11,8 +23,8 @@ android {
         applicationId = "com.falconone.bodycamserver"
         minSdk = 26
         targetSdk = 28
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     compileOptions {
@@ -22,8 +34,32 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+    // Si falta cualquiera de las cuatro propiedades o el fichero no esta, no se
+    // declara la config y el release sale sin firmar: preferible a romper el
+    // build en una maquina que no tenga la clave.
+    val releaseKeystore = localProperties.getProperty("RELEASE_KEYSTORE_FILE")
+        ?.let { rootProject.file(it) }
+        ?.takeIf { it.exists() }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = localProperties.getProperty("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
+                keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
+                // Con minSdk 26 el esquema v2 es suficiente y es el que acaba
+                // verificando (AGP omite el v1 aunque se pida). Se deja pedido
+                // por si algun dia baja el minSdk.
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
         }
     }
@@ -37,6 +73,9 @@ android {
     }
 
     buildFeatures {
+        // Necesario para BuildConfig.DEBUG: el alta de identidad por intent solo
+        // existe en compilaciones de depuracion (ver MainActivity).
+        buildConfig = true
         compose = true
     }
     composeOptions {

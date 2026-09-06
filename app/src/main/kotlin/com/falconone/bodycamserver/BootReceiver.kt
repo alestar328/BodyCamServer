@@ -10,6 +10,9 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             HardwareController.irOff()  // ensure IR is off after reboot
             context.startForegroundService(Intent(context, BtServerService::class.java))
+            // Un corte de red o un apagado deja subidas a medias. Aquí es donde se
+            // retoman: UploadSessions recuerda el offset, esto vuelve a intentarlo.
+            UploadService.resumePending(context)
         }
     }
 }

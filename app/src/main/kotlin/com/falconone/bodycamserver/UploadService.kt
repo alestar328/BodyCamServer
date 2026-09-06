@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.util.Log
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
@@ -45,9 +46,9 @@ class UploadService : IntentService("FalconUploadService") {
         }
 
         /**
-         * Sube todos los segmentos de un incidente. Cada segmento viaja como una
-         * petición propia —el endpoint actual no tiene sesión ni reanudación— pero
-         * llevan incident_id e índice para que el repositorio pueda reagruparlos.
+         * Sube un incidente. Con [UploadConfig] configurado va por bloques y
+         * reanudable ([ChunkedUploader]); si no, cae al multipart de siempre para
+         * no dejar de subir en unidades que aún no tengan destino nuevo.
          */
         fun startIncident(context: Context, incidentId: String, lat: Double = 0.0, lon: Double = 0.0) {
             context.startService(
@@ -58,6 +59,42 @@ class UploadService : IntentService("FalconUploadService") {
                 }
             )
         }
+
+        /**
+         * Reencola los incidentes que quedaron a medio subir.
+         *
+         * Es la otra mitad de la reanudación: [UploadSessions] recuerda por dónde
+         * iba cada fichero, pero alguien tiene que volver a intentarlo. Se llama al
+         * arrancar la unidad, que es justo cuando se pierde una subida en vuelo.
+         *
+         * Va con startForegroundService porque desde un receptor de arranque la
+         * unidad no permite iniciar servicios en background.
+         */
+        fun resumePending(context: Context) {
+            if (!UploadConfig.enabled()) return
+            val pending = EvidenceStore.incidentIds().filter { !isDelivered(it) }
+            if (pending.isEmpty()) return
+            Log.d(TAG, "reanudando ${pending.size} incidente(s) sin entregar")
+            pending.forEach { id ->
+                context.startForegroundService(
+                    Intent(context, UploadService::class.java)
+                        .putExtra(EXTRA_INCIDENT_ID, id)
+                )
+            }
+        }
+
+        /**
+         * Un incidente está entregado cuando existe su recibo y dice que el
+         * servidor lo aceptó. El recibo lo escribe [writeReceipt] y es lo que
+         * impide volver a subir lo mismo en cada arranque.
+         */
+        fun isDelivered(incidentId: String): Boolean = try {
+            File(EvidenceStore.incidentDir(incidentId), RECEIPT_NAME)
+                .takeIf { it.isFile }
+                ?.let { JSONObject(it.readText()).optBoolean("delivered") } ?: false
+        } catch (_: Exception) { false }
+
+        const val RECEIPT_NAME = "upload.json"
     }
 
     override fun onCreate() {
@@ -73,7 +110,12 @@ class UploadService : IntentService("FalconUploadService") {
 
         val incidentId = intent.getStringExtra(EXTRA_INCIDENT_ID)
         if (incidentId != null) {
-            uploadIncident(incidentId, lat, lon)
+            if (UploadConfig.enabled()) {
+                uploadIncidentChunked(incidentId, lat, lon)
+            } else {
+                Log.w(TAG, "sin subida por bloques configurada — se usa el multipart anterior")
+                uploadIncidentLegacy(incidentId, lat, lon)
+            }
             return
         }
 
@@ -87,11 +129,183 @@ class UploadService : IntentService("FalconUploadService") {
     }
 
     /**
-     * Segmentos en orden. Se sube cada uno por separado en vez de concatenar el
-     * incidente: un fallo solo cuesta reintentar un segmento, y el repositorio
-     * puede empezar a transcribir antes de que llegue el resto.
+     * Sube un incidente por bloques, reanudable.
+     *
+     * ── Qué se sube ───────────────────────────────────────────────────────────
+     *
+     * El **`.fev` cifrado** si existe, y el MP4 en claro solo si el cifrado falló.
+     * Esto invierte el comportamiento anterior, que mandaba siempre el claro: sin
+     * la pública de Nexus el servidor no habría podido abrir un `.fev`, pero con
+     * el destinatario `srv:` activo —hoy con clave de desarrollo, ver
+     * [NexusKeyWrapper]— ya sí, y no hay razón para que la evidencia viaje en claro.
+     *
+     * Primero el `manifest.json` y después el vídeo, en ese orden a propósito: el
+     * manifest es pequeño, llega en un momento y lleva dentro el `sha256_cipher`
+     * que el servidor va a necesitar para verificar lo que viene detrás. Si la
+     * subida del vídeo se corta y no vuelve en horas, al menos el repositorio sabe
+     * qué incidente existe y qué debería estar recibiendo.
+     *
+     * ── Cuándo se da por entregado ────────────────────────────────────────────
+     *
+     * Solo cuando el servidor **no contradice** el hash. `verified == false` es un
+     * incidente de integridad, no un fallo de red: se deja el recibo con la marca
+     * y no se borra nada.
      */
-    private fun uploadIncident(incidentId: String, lat: Double, lon: Double) {
+    private fun uploadIncidentChunked(incidentId: String, lat: Double, lon: Double) {
+        if (isDelivered(incidentId)) {
+            Log.d(TAG, "$incidentId ya entregado — nada que hacer")
+            return
+        }
+
+        val payload = payloadOf(incidentId)
+        if (payload == null) {
+            Log.e(TAG, "$incidentId no tiene fichero que subir")
+            return
+        }
+        if (!payload.encrypted) {
+            // Merece un aviso: significa que el cifrado falló al cerrar y que la
+            // evidencia está saliendo de la unidad en claro.
+            Log.w(TAG, "$incidentId se sube SIN cifrar — no hay .fev")
+        }
+
+        val base = mutableMapOf(
+            "incident_id" to incidentId,
+            "officer_code" to HardcodedOfficer.badge,
+            "officer_name" to HardcodedOfficer.name,
+            "device_id" to (Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+                ?: "unknown-device"),
+            "device_model" to android.os.Build.MODEL,
+            "uploaded_at" to SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date()),
+        )
+        if (lat != 0.0 || lon != 0.0) {
+            base["latitude"] = lat.toString()
+            base["longitude"] = lon.toString()
+        }
+
+        // 1. Manifest. Si falla no se aborta: el vídeo es la evidencia, el manifest
+        //    se puede reenviar después y el servidor ya tiene el hash en el propio
+        //    Upload-Metadata del vídeo.
+        EvidenceStore.manifestOf(incidentId)?.let { manifest ->
+            notify("$incidentId — manifest")
+            // El hash va también en la metadata, no solo como huella local: sin
+            // declararlo el servidor no tiene contra qué comparar y el manifest
+            // se queda sin verificar, que es medio incidente sin confirmar.
+            val manifestSha = EvidenceCrypto.sha256(manifest)
+            val outcome = ChunkedUploader.upload(
+                file = manifest,
+                fingerprint = manifestSha,
+                metadata = base + mapOf(
+                    "kind" to "manifest",
+                    "filename" to manifest.name,
+                    "sha256_cipher" to manifestSha,
+                    "encrypted" to "false",
+                    "crypto_format" to "none",
+                ),
+            )
+            if (!outcome.delivered) Log.w(TAG, "$incidentId: manifest no subido (${outcome.error})")
+        }
+
+        // 2. Evidencia.
+        notify("$incidentId — ${payload.file.name}")
+        val outcome = ChunkedUploader.upload(
+            file = payload.file,
+            fingerprint = payload.fingerprint,
+            metadata = base + mapOf(
+                "kind" to "evidence",
+                "filename" to payload.file.name,
+                "encrypted" to payload.encrypted.toString(),
+                "crypto_format" to if (payload.encrypted) "FEVD1" else "none",
+                "sha256_cipher" to payload.fingerprint,
+                "sha256_plain" to (payload.plainSha256 ?: ""),
+            ),
+        ) { sent, total ->
+            notify("$incidentId — ${100 * sent / total}%")
+        }
+
+        writeReceipt(incidentId, payload, outcome)
+
+        when {
+            outcome.delivered && outcome.verified == false -> {
+                Log.e(TAG, "$incidentId: el servidor NO confirma el hash — revisar")
+                notify("$incidentId: hash no coincide")
+            }
+            outcome.delivered -> {
+                Log.d(TAG, "$incidentId entregado (${outcome.bytesSent / 1024} KB enviados)")
+                notify("$incidentId subido")
+            }
+            else -> {
+                Log.e(TAG, "$incidentId sin entregar: ${outcome.error}")
+                notify("$incidentId pendiente — se reanudará")
+            }
+        }
+    }
+
+    /**
+     * Qué fichero representa al incidente y con qué huella se identifica.
+     *
+     * La huella es el SHA-256 del contenido que se va a subir, y viene ya calculado
+     * del cifrado (`sha256_cipher` en el manifest) — no se vuelve a leer el fichero.
+     * En el camino degradado sin `.fev` hay que calcularlo aquí; cuesta una pasada
+     * de lectura, y es aceptable porque es la excepción.
+     */
+    private data class Payload(
+        val file: File,
+        val fingerprint: String,
+        val encrypted: Boolean,
+        val plainSha256: String?,
+    )
+
+    private fun payloadOf(incidentId: String): Payload? {
+        val dir = EvidenceStore.incidentDir(incidentId)
+        val crypto = EvidenceStore.manifestOf(incidentId)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?.optJSONObject("crypto")
+
+        if (crypto != null) {
+            val fev = File(dir, crypto.optString("encrypted_filename"))
+            val sha = crypto.optString("sha256_cipher")
+            if (fev.isFile && sha.isNotBlank()) {
+                return Payload(fev, sha, true, crypto.optString("sha256_plain").takeIf { it.isNotBlank() })
+            }
+            Log.w(TAG, "$incidentId: el manifest declara cifrado pero falta el .fev")
+        }
+
+        val plain = EvidenceStore.incidentSegments(incidentId).firstOrNull() ?: return null
+        val sha = EvidenceCrypto.sha256(plain)
+        return Payload(plain, sha, false, sha)
+    }
+
+    /**
+     * Recibo de entrega, junto a la evidencia. Es lo que consulta [resumePending]
+     * para no volver a subir lo mismo, y lo que deja constancia en la propia unidad
+     * de qué se mandó, cuándo y si el servidor confirmó el hash.
+     */
+    private fun writeReceipt(incidentId: String, payload: Payload, outcome: ChunkedUploader.Outcome) {
+        val receipt = JSONObject().apply {
+            put("delivered", outcome.delivered)
+            put("verified_by_server", outcome.verified ?: JSONObject.NULL)
+            put("filename", payload.file.name)
+            put("encrypted", payload.encrypted)
+            put("sha256_uploaded", payload.fingerprint)
+            put("bytes", payload.file.length())
+            put("session_url", outcome.sessionUrl ?: JSONObject.NULL)
+            put("endpoint", UploadConfig.baseUrl())
+            put("at_epoch_ms", System.currentTimeMillis())
+            outcome.error?.let { put("error", it) }
+        }
+        try {
+            File(EvidenceStore.incidentDir(incidentId), RECEIPT_NAME).writeText(receipt.toString(2))
+        } catch (e: Exception) {
+            Log.e(TAG, "no se pudo escribir el recibo de $incidentId: ${e.message}")
+        }
+    }
+
+    /**
+     * Camino anterior: cada segmento en un POST multipart propio, sin sesión ni
+     * reanudación. Se conserva para las unidades que todavía no tengan destino de
+     * subida por bloques configurado, para no dejarlas sin subir nada.
+     */
+    private fun uploadIncidentLegacy(incidentId: String, lat: Double, lon: Double) {
         val segments = EvidenceStore.incidentSegments(incidentId)
         if (segments.isEmpty()) {
             Log.e(TAG, "Incidente sin segmentos: $incidentId")
