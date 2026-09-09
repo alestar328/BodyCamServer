@@ -207,11 +207,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         Log.d("FalconKeys", "MainActivity onKeyDown: $keyCode")
+        // F2 (PTT) NO se atiende aquí: lo lleva el broadcast SIDE_KEY_INTENT en
+        // BtServerService, que además es la única vía que funciona con la pantalla
+        // apagada. Con la Activity en foco onKeyDown auto-repite cada 50 ms y un
+        // mantenido largo conmutaba el micro una decena de veces.
         when (keyCode) {
-            KeyEvent.KEYCODE_F2 -> {
-                if (!ButtonDebounce.tryAcquire()) return true
-                LivestreamService.toggleMic()
-            }
             KeyEvent.KEYCODE_F3 -> {
                 if (!ButtonDebounce.tryAcquire()) return true
                 toggleLivestream()

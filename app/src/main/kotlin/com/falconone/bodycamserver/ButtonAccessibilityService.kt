@@ -15,9 +15,14 @@ private const val TAG = "FalconKeys"
  *   Settings → Accessibility → FalconOne → Enable
  *
  * Button layout (YIMAO W1):
- *   F2 = front action button  → toggle recording
+ *   F2 = PTT                  → NO se toca aquí; lo lleva BtServerService
  *   F3 = side button top      → IR LED on/off toggle
- *   F4 = side button bottom   → reserved (future: photo)
+ *   F4 = side button bottom   → linterna
+ *
+ * OJO: lo que F3 y F4 hacen aquí (IR y linterna) no coincide con el mapa de
+ * BtServerService (livestream y grabación). La contradicción es anterior al PTT y
+ * sigue abierta; este servicio está desactivado en la unidad, así que hoy manda el
+ * broadcast.
  */
 class ButtonAccessibilityService : AccessibilityService() {
 
@@ -27,26 +32,13 @@ class ButtonAccessibilityService : AccessibilityService() {
         if (event.action != KeyEvent.ACTION_DOWN) return false
         Log.d(TAG, "KeyEvent: ${event.keyCode}")
         return when (event.keyCode) {
-            KeyEvent.KEYCODE_F2 -> {
-                // Debounce compartido: el botón físico rebota y llegaban dos
-                // paradas seguidas. La segunda caía en stopAndFinish() con
-                // isRecording ya en false y cerraba la pregunta de envío.
-                if (!ButtonDebounce.tryAcquire()) return true
-                // Mismo rebote que en sideKeyReceiver: con la pregunta de envío
-                // recién abierta esta pulsación es el eco de la que la abrió.
-                if (RecordingActivity.ignoreRecordKey()) {
-                    Log.d(TAG, "F2 descartado: pregunta de envío recién abierta")
-                    return true
-                }
-                if (RecordingActivity.isRecording) {
-                    Log.d(TAG, "F2 → STOP recording")
-                    RecordingActivity.stop(this, askUpload = true)
-                } else {
-                    Log.d(TAG, "F2 → START recording")
-                    RecordingActivity.start(this)
-                }
-                true
-            }
+            // F2 es el PTT y se atiende SOLO en el broadcast SIDE_KEY_INTENT de
+            // BtServerService, que llega igual con la pantalla apagada. Si también
+            // se conmutase aquí, el broadcast (que el firmware emite al SOLTAR) y
+            // este onKeyEvent (que llega al PULSAR) se separarían más que los
+            // 300 ms de ButtonDebounce en cualquier pulsación larga, y el micro se
+            // abriría y cerraría de golpe. Se deja pasar sin consumir.
+            KeyEvent.KEYCODE_F2 -> false
             KeyEvent.KEYCODE_F3 -> {
                 irEnabled = !irEnabled
                 if (irEnabled) HardwareController.irOn() else HardwareController.irOff()

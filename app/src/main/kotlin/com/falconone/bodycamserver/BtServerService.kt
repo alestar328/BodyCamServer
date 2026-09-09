@@ -115,9 +115,16 @@ class BtServerService : Service() {
 
     // Physical button mapping — VERIFIED via logcat (FalconSmoke / SIDE_KEY_INTENT)
     // on 2026-06-03 (confirmed THREE times). Each physical button emits:
-    //   • 132 / KEYCODE_F2 = "PTT / audio" button → toggle livestream mic        → BTN_PTT
+    //   • 132 / KEYCODE_F2 = "PTT / audio" button → conmuta el micro en Agora     → BTN_PTT_ON/OFF
     //   • 133 / KEYCODE_F3 = "SOS" button         → toggle Agora livestream       → BTN_STREAM_*
     //   • 134 / KEYCODE_F4 = "record" button      → toggle local recording        → BTN_REC_*
+    //
+    // El PTT (132) vive SOLO aquí, en el broadcast del firmware. Se quitó de
+    // MainActivity.onKeyDown y del servicio de accesibilidad a propósito: medido el
+    // 2026-09-08 en la unidad, el broadcast llega siempre —pantalla apagada, sin
+    // Activity delante— y con Activity en foco onKeyDown además AUTO-REPITE cada
+    // 50 ms, así que un mantenido largo conmutaba el micro varias veces. Una sola
+    // puerta y el conmutador es fiable.
     //
     // The physical SOS button (133) is wired to LIVESTREAM on purpose: the bodycam
     // joining Agora (uid 9001) IS the SOS signal the phone reacts to. In Falcon One,
@@ -138,9 +145,27 @@ class BtServerService : Service() {
             // is still active (within 300ms) and gets correctly discarded.
             when (keyCode) {
                 KeyEvent.KEYCODE_F2 -> executor.execute {
-                    val on = LivestreamService.toggleMic()
-                    Log.d(TAG, "SideKey F2 → PTT mic ${if (on) "ON" else "OFF"}")
-                    send(Ntf.PTT)
+                    // Abrir el micro sin red daría un PTT_ON que no transmite nada:
+                    // Agora crearía el engine y fallaría al entrar en el canal por
+                    // dentro. Cerrarlo sí se permite siempre, para poder callar.
+                    if (!cachedWifiOk && !LivestreamService.isMicEnabled) {
+                        Log.d(TAG, "SideKey F2 → PTT descartado: sin conexión")
+                        // Sin sonido el agente cree que ha abierto el micro y habla
+                        // solo: el zumbido es lo único que se lo dice ahí fuera.
+                        PttTones.denegado()
+                        send(Rsp.error("Sin WiFi — el PTT viaja por el canal de Agora"))
+                    } else {
+                        val on = LivestreamService.togglePtt(applicationContext)
+                        Log.d(TAG, "SideKey F2 → PTT mic ${if (on) "ON" else "OFF"}")
+                        val fallo = LivestreamService.lastPttError
+                        when {
+                            on -> send(Ntf.PTT_ON)
+                            // Cerrar es un OFF normal; no abrir es un error que el
+                            // agente tiene que ver, no un PTT que se apaga solo.
+                            fallo != null -> { send(Rsp.error(fallo)); send(Ntf.PTT_OFF) }
+                            else -> send(Ntf.PTT_OFF)
+                        }
+                    }
                 }
                 KeyEvent.KEYCODE_F3 -> executor.execute {
                     if (LivestreamService.isStreaming) {
@@ -210,6 +235,13 @@ class BtServerService : Service() {
         acquireWakeLock()
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification("Esperando conexión…"))
+        // Si Agora pierde la captura, el PTT se cierra solo: hay que decírselo al
+        // teléfono para que no siga mostrando el micro abierto.
+        LivestreamService.onPttDropped = { motivo ->
+            Log.w(TAG, "PTT caído: $motivo")
+            send(Rsp.error(motivo))
+            send(Ntf.PTT_OFF)
+        }
         registerReceiver(sideKeyReceiver, IntentFilter("android.intent.action.SIDE_KEY_INTENT"))
         registerReceiver(smokeKeyReceiver, IntentFilter().apply { smokeKeyActions.forEach { addAction(it) } })
         acquireWifiLock()
@@ -416,7 +448,8 @@ class BtServerService : Service() {
                 LivestreamService.isStreaming,
                 PreviewController.isActive,
                 RecordingActivity.serviceRequested,
-                RecordingActivity.state.name
+                RecordingActivity.state.name,
+                LivestreamService.isMicEnabled
             )
 
             Cmd.STREAM_START -> {

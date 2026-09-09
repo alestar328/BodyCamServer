@@ -39,7 +39,11 @@ object Ntf {
     const val REC_STOP     = "BTN_REC_STOP\n"
     const val STREAM_START = "BTN_STREAM_START\n"
     const val STREAM_STOP  = "BTN_STREAM_STOP\n"
-    const val PTT          = "BTN_PTT\n"
+    // El PTT es un conmutador, no un mantener-para-hablar: el firmware solo avisa
+    // al soltar el botón. Por eso lleva estado, como REC y STREAM, en vez del
+    // antiguo BTN_PTT suelto que no decía si el micro quedaba abierto o cerrado.
+    const val PTT_ON       = "BTN_PTT_ON\n"
+    const val PTT_OFF      = "BTN_PTT_OFF\n"
 }
 
 // Respuestas que envía la bodycam al teléfono
@@ -47,6 +51,6 @@ object Rsp {
     fun ok(cmd: String) = "OK:$cmd\n"
     fun error(msg: String) = "ERROR:$msg\n"
     fun pong() = "PONG\n"
-    fun status(recording: Boolean, battery: Int, storage: Long, wifi: Boolean, api: Boolean, ip: String = "", streaming: Boolean = false, preview: Boolean = false, armed: Boolean = false, captureState: String = "IDLE") =
-        "STATUS:{\"recording\":$recording,\"battery\":$battery,\"storage_mb\":$storage,\"wifi\":$wifi,\"api\":$api,\"file_server_ip\":\"$ip\",\"file_server_port\":$FILE_SERVER_PORT,\"streaming\":$streaming,\"stream_uid\":$BODYCAM_UID,\"stream_channel\":\"$AGORA_CHANNEL\",\"preview\":$preview,\"armed\":$armed,\"capture_state\":\"$captureState\"}\n"
+    fun status(recording: Boolean, battery: Int, storage: Long, wifi: Boolean, api: Boolean, ip: String = "", streaming: Boolean = false, preview: Boolean = false, armed: Boolean = false, captureState: String = "IDLE", ptt: Boolean = false) =
+        "STATUS:{\"recording\":$recording,\"battery\":$battery,\"storage_mb\":$storage,\"wifi\":$wifi,\"api\":$api,\"file_server_ip\":\"$ip\",\"file_server_port\":$FILE_SERVER_PORT,\"streaming\":$streaming,\"stream_uid\":$BODYCAM_UID,\"stream_channel\":\"$AGORA_CHANNEL\",\"preview\":$preview,\"armed\":$armed,\"capture_state\":\"$captureState\",\"ptt\":$ptt}\n"
 }

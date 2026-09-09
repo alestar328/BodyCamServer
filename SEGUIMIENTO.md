@@ -10,14 +10,16 @@ Registro único de horas y entregas para las **dos aplicaciones del proyecto**.
 **Inicio del proyecto:** 2026-04-23 (primer commit de BodyCamServer)
 **Último pago recibido:** 2026-07-24
 **Tarifa:** 20 €/h
-**Última actualización de este archivo:** 2026-08-26 15:56
-**Versión BodyCamServer:** `1.2` (versionCode 3) en código — cifrado de evidencia y
-subida por bloques. La unidad **corre este mismo binario**: instalado y validado en
-hardware el 2026-08-26.
+**Última actualización de este archivo:** 2026-09-08 18:10
+**Versión BodyCamServer:** `1.3` (versionCode 4) en código, firmada. La unidad corre el
+binario del cifrado y la subida por bloques, validado en hardware; el PTT del 08-sep está
+probado en la unidad pero **sin commitear**.
+**Versión AeriaNexusPrototype:** `1.6` (versionCode 7), con todo lo del 25-ago en adelante
+**sin commitear**.
 
 ---
 
-## 0. Trazabilidad desde el último pago (2026-07-24 → 2026-08-26, 33 días)
+## 0. Trazabilidad desde el último pago (2026-07-24 → 2026-09-08, 46 días)
 
 El desglose es **por aplicación**, y dentro de cada aplicación por bloques de trabajo.
 Cada bloque lleva un identificador con el prefijo de su app (`BC-n` para BodyCamServer,
@@ -29,7 +31,7 @@ perder de vista a qué app pertenecen.
 ## 0.A · Aplicación **BodyCamServer**
 
 > Servidor / dispositivo bodycam · repo `alestar328/BodyCamServer`
-> **2 bloques · 2 días de actividad · horas sin registrar**
+> **7 bloques · 9 días de actividad**
 
 ### Bloque `BC-1` — Grabación continua · 2026-08-09 · ✅ entregado en `main`
 > commit `d4a4709` "avance grabacion continua" — 13 archivos, +1027 / −2378
@@ -93,38 +95,42 @@ grabación. Compilado y desplegado en la unidad.
 
 | Bloque | Fecha | Estado | Volumen real de código | Horas | Importe |
 |---|---|---|---|---|---|
-| `BC-1` Grabación continua / EvidenceStore + "Subir a servidor" | 2026-08-09, 08-16, 08-23 | ✅ Integrado, al estándar bodycam (vídeo único con rótulo) y validado en la unidad | ~1027 añadidas / ~438 borradas · 12 archivos + merge + ~880 líneas del 23-ago | 11.0 | 220 € |
+| `BC-1` Grabación continua / EvidenceStore + "Subir a servidor" + entrega y firma de release | 2026-08-09, 08-16, 08-23, 08-27 | ✅ Integrado, al estándar bodycam (vídeo único con rótulo), validado en la unidad · v1.3 firmada | ~1027 añadidas / ~438 borradas · 12 archivos + merge + ~880 líneas del 23-ago | 13.0 | 260 € |
 | `BC-2` Cifrado (medición + determinación) | 2026-08-14, 08-15 | ⚠️ Sin commitear (`develop`) | ~2803 añadidas · 7 archivos | 9.0 | 180 € |
-| `BC-3` Pantalla en reposo + cronómetro | 2026-08-15 | ✅ En `develop` | ~90 añadidas · 1 archivo | 0.0 ¹ | 0 € |
-| `BC-4` Panel de control (UX + Compose) | 2026-08-23 | ✅ En `develop` | ~978 añadidas / ~329 borradas · 16 archivos | 1.8 | 36 € |
-| Análisis de ciberseguridad + administración | 2026-08-15, 08-23, 08-25 | ✅ En `develop` | — | 1.4 | 28 € |
-| Reuniones de equipo (semana 17–21 ago) | 2026-08-16 | — | — | 2.0 | 40 € |
-| `BC-5` Cifrado y hash de la evidencia (implementación) | 2026-08-25 | ✅ En `develop` (`81f0995`), **validado en la unidad** · v1.2 | ~1060 añadidas · 6 archivos | 3.5 | 70 € |
-| `BC-6` Subida por bloques reanudable + servidor stub | 2026-08-26 | ⚠️ Sin commitear (`develop`), **validado en la unidad** | ~1521 añadidas · 11 archivos | 2.3 | 46 € |
-| **Subtotal app** | | **7 días de actividad** | **~8381 añadidas · 57 archivos** | **31.0** | **620 €** |
+| `BC-3` Pantalla en reposo + cronómetro | 2026-08-15 | ✅ En `develop` | ~90 añadidas · 1 archivo | 1.5 | 30 € |
+| `BC-4` Panel de control (UX + Compose) | 2026-08-23 | ✅ En `develop` | ~978 añadidas / ~329 borradas · 16 archivos | 2.0 | 40 € |
+| Análisis de ciberseguridad + administración | 2026-08-15, 08-23 | ✅ En `develop` | — | 0.5 | 10 € |
+| Reuniones de equipo (semana 17–21 ago) | 2026-08-16 | — | — | 3.0 | 60 € |
+| `BC-5` Cifrado y hash de la evidencia (implementación) | 2026-08-25 | ✅ En `develop` (`81f0995`), **validado en la unidad** | ~1060 añadidas · 6 archivos | 3.0 | 60 € |
+| `BC-6` Subida por bloques reanudable + servidor stub | 2026-08-26 | ⚠️ Sin commitear (`develop`), **validado en la unidad** | ~1521 añadidas · 11 archivos | 4.0 | 80 € |
+| `BC-8` PTT por Agora (botón físico F2) | 2026-09-08 | ⚠️ Sin commitear (`develop`), **validado en la unidad** | 5 archivos | 2.8 | 56 € |
+| **Subtotal app** | | **9 días de actividad** | **~8381 añadidas · 62 archivos** | **38.8** | **776 €** |
 
-> ¹ `BC-3` queda a 0,0 h porque sus horas están imputadas dentro de la sesión del **2026-08-16**
-> (bloque `BC-1`, "visualización de tiempo de grabación"). El bloque se mantiene en la tabla para
-> no perder el rastro del trabajo, no porque no se hiciera.
+> El reparto de horas de esta tabla es el del Excel de seguimiento, que es el registro
+> autoritativo. `BC-7` **no se usa aquí a propósito**: ese identificador está pedido por dos
+> trabajos distintos en las notas del proyecto (firma de release del 27-ago y emparejamiento
+> con la bodycam del 6-sep), así que el PTT abre `BC-8` en vez de añadir un tercer significado.
+> Conviene cerrar esa colisión antes de facturar por bloques.
 
 ---
 
 ## 0.B · Aplicación **AeriaNexusPrototype**
 
 > App cliente / control · repo `alestar328/AeriaNexusPrototype`
-> **1 bloque · 2 días de actividad**
+> **2 bloques · 6 días de actividad**
 
-El último commit sigue siendo `74cba54` del **2026-07-22**, pero el **2026-08-25** esta app
-vuelve a tener trabajo: el cifrado de evidencia se portó desde BodyCamServer para que las
-dos produzcan el mismo formato, y se retiraron los incidentes de ejemplo. El **2026-08-26**
-se le alineó el destinatario `srv:` con el de la unidad. **Sin commitear todavía.**
+El último commit del repo sigue siendo antiguo, pero desde el **2026-08-25** esta app tiene
+trabajo continuado: cifrado de evidencia portado desde BodyCamServer, subida por bloques,
+firma de release, bóveda con contraseña, notas de audio y —el **2026-09-08**— el PTT en sus
+dos sentidos. **Nada de esto está commiteado todavía.**
 
 ### Subtotal AeriaNexusPrototype
 
 | Bloque | Fecha | Estado | Volumen real de código | Horas | Importe |
 |---|---|---|---|---|---|
-| `AN-1` Cifrado y hash de la evidencia (port de FEVD v1) | 2026-08-25, 08-26 | ⚠️ Sin commitear · **validado en teléfono** (Redmi Note 8 Pro, Android 11) | ~821 añadidas / ~46 borradas · 7 archivos | 1.7 | 34 € |
-| **Subtotal app** | | **2 días de actividad** | **~821 añadidas · 7 archivos** | **1.7** | **34 €** |
+| `AN-1` Cifrado, subida por bloques, firma de release, bóveda y notas de audio | 2026-08-25 → 08-30 | ⚠️ Sin commitear · **validado en teléfono** (Redmi Note 8 Pro, Android 11) | ~821 añadidas / ~46 borradas · 7 archivos, más bóveda y subida | 14.0 | 280 € |
+| `AN-4` PTT: recepción del de la bodycam + PTT propio del teléfono | 2026-09-08 | ⚠️ Sin commitear · recepción verificada en hardware, **PTT propio sin probar en aparatos** | 6 archivos | 2.0 | 40 € |
+| **Subtotal app** | | **6 días de actividad** | | **16.0** | **320 €** |
 
 ---
 
@@ -132,18 +138,24 @@ se le alineó el destinatario `srv:` con el de la unidad. **Sin commitear todav�
 
 | Aplicación | Bloques | Días de actividad | Código añadido | Horas | Importe |
 |---|---|---|---|---|---|
-| BodyCamServer | `BC-1`, `BC-2`, `BC-3`, `BC-4`, `BC-5`, `BC-6` | 7 | ~8381 líneas · 57 archivos | 31.0 | 620 € |
-| AeriaNexusPrototype | `AN-1` | 2 | ~821 líneas · 7 archivos | 1.7 | 34 € |
-| **TOTAL PROYECTO** | **7** | **7** | **~9202 líneas · 64 archivos** | **32.7** | **654 €** |
+| BodyCamServer | `BC-1`, `BC-2`, `BC-3`, `BC-4`, `BC-5`, `BC-6`, `BC-8` | 9 | ~8381 líneas · 62 archivos | 38.8 | 776 € |
+| AeriaNexusPrototype | `AN-1`, `AN-4` | 6 | ~821 líneas · 13 archivos | 16.0 | 320 € |
+| **TOTAL PROYECTO** | **9** | **11** | **~9202 líneas · 75 archivos** | **54.8** | **1096 €** |
 
-**Días con actividad desde el pago: 7** (2026-08-09, 08-14, 08-15, 08-16, 08-23, 08-25 y
-08-26). El 2026-08-25 es el primer día desde el pago con trabajo en **las dos** aplicaciones,
-y el 08-26 el segundo.
+**Días con actividad desde el pago: 11** (2026-08-09, 08-14, 08-15, 08-16, 08-23, 08-25,
+08-26, 08-27, 08-29, 08-30 y 09-08). El 2026-08-25 fue el primer día desde el pago con
+trabajo en **las dos** aplicaciones; el 09-08 es el más reciente.
 
-**Sobre las horas:** las del **09 y 14 de agosto** se han reconstruido a posteriori (6,0 h cada
+**Sobre las horas:** las del **09 y 14 de agosto** se reconstruyeron a posteriori (6,0 h cada
 una) a partir de las marcas de tiempo de los archivos y del volumen de los commits — son
-estimaciones documentadas, no un cronómetro. Las del **15 y 16 de agosto** están registradas.
-Total pendiente de facturar: **32,7 h = 654 €**.
+estimaciones documentadas, no un cronómetro. Las tres sesiones del **27 de agosto** también
+van marcadas como estimadas. Las del **8 de septiembre** salen de marcas de fichero
+(12:33–16:39 y 17:40–18:10), con el reparto entre las dos apps estimado sobre un total medido;
+el hueco 16:39–17:40 de ese día **no está contado**.
+
+⚠️ **Este total no incluye el 3, 4, 6 y 7 de septiembre**, que nunca se anotaron: son
+**~10,4 h medidas más dos días sin medir**. Ver el aviso de §3. Por eso **54,8 h es un
+suelo**, no la cifra real pendiente de facturar.
 
 ### Desglose del 2026-08-15 (reloj del PC)
 
@@ -175,16 +187,18 @@ hubo trabajo previo sin rastro.
 | Concepto | BodyCamServer | AeriaNexusPrototype |
 |---|---|---|
 | Rama principal | **`develop`** (desde 2026-08-23) | `main` |
-| Último commit | `81f0995` — 2026-08-25 | `74cba54` — 2026-07-22 |
-| Versión | **1.2** (versionCode 3) | 1.0 (sube sola en `assembleRelease`) |
+| Último commit | `c65bd1c` — 2026-09-06 | `8b7111d` — 2026-09-07 |
+| Versión | **1.3** (versionCode 4), firmada | **1.6** (versionCode 7) |
 | Relación con `main` | `develop` ⊇ `main` (merge `06008b2`) | — |
-| Trabajo sin commitear | Solo el salto a 1.2 en `build.gradle.kts` | **Sí** — todo el cifrado (7 archivos) |
+| Trabajo sin commitear | **Sí** — el PTT del 08-sep (5 archivos) | **Sí** — PTT (6 archivos), bóveda, subida por bloques y cifrado |
 
 **Última entrega (push a `main`):** 2026-08-09 → `d4a4709` "avance grabacion continua"
 **Estado funcional:** grabación continua con pre-roll de 20 s **validada en la unidad
-física** el 2026-08-23 (ciclo grabar → incidente con manifest → rearme automático), y desde
-el 2026-08-25 **la evidencia sale cifrada y hasheada** de la unidad (formato FEVD v1,
-`docs/CRYPTO-FORMAT.md`), también validado en hardware.
+física** el 2026-08-23, evidencia **cifrada y hasheada** desde el 2026-08-25 (formato FEVD v1,
+`docs/CRYPTO-FORMAT.md`) y **subida por bloques reanudable** desde el 2026-08-26, todo
+validado en hardware. Desde el **2026-09-08** el **PTT** funciona en los dos sentidos: la voz
+de la bodycam (botón F2) llega a todos los teléfonos por Agora, y el teléfono tiene su propio
+botón de mantener-para-hablar — este último **compila pero no se ha probado en aparatos**.
 
 > ✅ La divergencia `develop`/`main` del aviso anterior quedó **cerrada** con el merge
 > `06008b2` (2026-08-23). `develop` es la rama principal; `main` queda como rama de
@@ -232,19 +246,45 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 | 2026-08-09 | BC | BC-1 | 6.0 | Grabación continua: `EvidenceStore` (buffer en anillo, pre-roll 120 s, segmentos 8 MB), reescritura de `RecordingActivity`, retirada de `CameraController` | `d4a4709` | No | Reconstruido de git |
 | 2026-08-14 | BC | BC-2 | 6.0 | Cifrado (medición): `CryptoBenchmark` (SHA-256 + AES-256-GCM por bloques), `RecorderWatch` (watchdog de grabaciones largas), endpoint `/benchmark`, fix de path traversal, 2 scripts Python, testing con vídeos reales | _(sin commitear)_ | No | Marcas de tiempo 15:47–22:56 |
 | 2026-08-15 | BC | — | 0.0 | Alta del sistema de seguimiento de horas (cubre las dos apps) | _(pendiente)_ | No | Registrado |
+| 2026-08-15 | BC | BC-3 | 1.5 | Pantalla en reposo al grabar + cronómetro en `RecordingActivity`. Compilado y desplegado en la unidad | _(sin commitear)_ | No | Registrado |
 | 2026-08-15 | BC | BC-2 | 3.0 | Cifrado (medición): `CryptoBenchmark` (SHA-256 + AES-256-GCM por bloques) — **continuación** | _(sin commitear)_ | No | Marcas de tiempo 15:47–22:56 |
 | 2026-08-16 | BC | BC-1 | 2.0 | Funcionalidad "Subir a servidor ¿sí/no?", visualización del tiempo de grabación | _(sin commitear)_ | No | Registrado |
-| 2026-08-16 | BC | — | 2.0 | Reuniones de equipo, semana del 17 al 21 de agosto | — | No | Registrado |
-| 2026-08-23 | BC | — | 0.4 | Análisis del *Security Feature List* (34 features: 15 viables sin backend, 12 parciales, 7 bloqueadas), ruta de desarrollo hasta fin de septiembre y actualización del seguimiento | `db04e55` | No | Marcas de tiempo 15:52–16:16 |
+| 2026-08-16 | BC | — | 3.0 | Reuniones de equipo, semana del 17 al 21 de agosto | — | No | Registrado |
+| 2026-08-23 | BC | — | 0.5 | Análisis del *Security Feature List* (34 features: 15 viables sin backend, 12 parciales, 7 bloqueadas), ruta de desarrollo hasta fin de septiembre y actualización del seguimiento | `db04e55` | No | Marcas de tiempo 15:52–16:16 |
 | 2026-08-23 | BC | BC-1 | 1.0 | Grabación continua integrada en `develop` (merge de `main`): anillo + incidentes + manifest sobre la UI Compose. Requisitos de producto: buffer automático al abrir, pre-roll de 20 s, LED azul en servicio (LedSignals centralizado). Depuración en la unidad: el parche de armado no había llegado al disco; verificado ciclo completo grabar→manifest→rearme en hardware | `06008b2`, `56d5478`, `99b42a6`, `f2e7e52` | No | Marcas de tiempo 18:04–19:06 |
-| 2026-08-23 | BC | BC-4 | 1.8 | Panel de control: 3 bugs de la pregunta de envío (`finish()` en paradas redundantes, rebote de F2, arranque de grabación con la pregunta abierta), rediseño para pantalla de 3 cm con iconos vectoriales, migración de las dos pantallas a Compose con 8 previews, fullscreen real (tema, inmersivo, insets del decor) | `db04e55`, `a599da9` | No | Marcas de tiempo 16:16–18:04 |
+| 2026-08-23 | BC | BC-4 | 2.0 | Panel de control: 3 bugs de la pregunta de envío (`finish()` en paradas redundantes, rebote de F2, arranque de grabación con la pregunta abierta), rediseño para pantalla de 3 cm con iconos vectoriales, migración de las dos pantallas a Compose con 8 previews, fullscreen real (tema, inmersivo, insets del decor) | `db04e55`, `a599da9` | No | Marcas de tiempo 16:16–18:04 |
 | 2026-08-23 | BC | BC-1 | 2.0 | Evidencia al estándar bodycam, todo validado en la unidad: identidad del oficial en overlay + manifest (`Officer.kt`, hardcodeado con TODO), un solo MP4 por incidente (`IncidentAssembler`, remux sin recodificar), rótulo del oficial quemado en los frames (`VideoStamper`, decode→GL→encode por hardware; verificado que el firmware no trae watermark), nombres `placa_fecha_hora`, numeración secuencial `INC_000001` con contador auto-reparable, `.nomedia` en el anillo | `671cab7`, `48892dd`, `b00332f`, `4373116`, `a25c0c7` | No | Marcas de tiempo 19:06–21:05 |
-| 2026-08-25 | BC | BC-5 | 3.5 | Cifrado y hash de la evidencia, **implementación**: formato FEVD v1 documentado como contrato de las dos apps (`docs/CRYPTO-FORMAT.md`), `EvidenceCrypto` (AES-256-GCM en bloques de 1 MB con nonce y AAD derivados del índice, más SHA-256 en la misma pasada), `EvidenceKeys` (DEK por fichero + envoltorios: Keystore del dispositivo funcional, RSA-OAEP del servidor listo y desactivado), hashes persistidos en el manifest, disparo al cerrar el incidente, y descifrador Python de referencia para ciberseguridad. Validado en la unidad: cifra 20,3 MB en 397 ms y el `.fev` se descifra en PC dando un fichero idéntico byte a byte | `81f0995` | No | Marcas de tiempo 12:30–15:00 |
-| 2026-08-25 | AN | AN-1 | 1.5 | Cifrado y hash de la evidencia, **port al teléfono**: `EvidenceCrypto` y `EvidenceKeys` idénticos byte a byte a los de la bodycam salvo el alias de Keystore, enganche al cerrar la captura, `.fev` a almacenamiento privado (fuera de la galería) y sustitución de los hashes simulados por el SHA-256 real. Validado en el teléfono (Redmi Note 8 Pro, Android 11): cifra 21,6 MB en 303 ms y el `.fev` lo abre el mismo descifrador que el de la bodycam, idéntico byte a byte. Retirados además los 3 incidentes de ejemplo hardcodeados | _(sin commitear)_ | No | Registrado |
-| 2026-08-25 | BC | — | 1.0 | Documentación de la etapa de cifrado para la reunión con ciberseguridad: análisis de cobertura del *Security Feature List* (EVD-003 hecho; CRY-001 y CRY-002 parciales; EVD-004 sin empezar) y resumen en Word (`Evidence-Encryption-Summary.docx`) con formato, ubicación del código por fichero y función, tiempos medidos en los dos dispositivos y decisiones abiertas | — | No | Registrado |
-| 2026-08-26 | BC | BC-6 | 2.3 | Subida por bloques reanudable, **implementada y validada en la unidad**: cliente tus 1.0.0 (core + Creation) con extensión propia de verificación — `ChunkedUploader` (4 operaciones, reintentos con backoff, reanudación por el offset del servidor), `UploadSessions` (sesión persistida en sdcard, huella = SHA-256 del ciphertext), `UploadConfig` (destino en `upload.conf`, sin recompilar), `UploadService` reescrito para subir el `.fev` + manifest con recibo de entrega, servidor stub de referencia en Python con corte de conexión inyectable (`tools/tus_stub_server.py`) y contrato para backend (`docs/UPLOAD-PROTOCOL.md`). Activado el destinatario `srv:` con par RSA de desarrollo: **la evidencia ya sale cifrada de la unidad, no en claro**. Validado en hardware: 9 incidentes, 61,9 MB, todos verificados por hash, con corte inyectado, corte real de WiFi y reanudación tras reinicio completo de la unidad | _(sin commitear)_ | No | Marcas de tiempo 13:29–15:56 |
-| 2026-08-26 | AN | AN-1 | 0.2 | Alineado el destinatario `srv:` del teléfono con el de la unidad (misma pública de desarrollo y mismo `kid`): sin esto Nexus no podría abrir la evidencia capturada con el móvil. Verificado que las dos apps llevan la misma clave y que compila | _(sin commitear)_ | No | Marcas de tiempo 13:29–15:56 |
-|  |  | **TOTAL** | **32.7** |  |  |  | **654 €** |
+| 2026-08-25 | BC | BC-5 | 3.0 | Cifrado y hash de la evidencia, **implementación**: formato FEVD v1 documentado como contrato de las dos apps (`docs/CRYPTO-FORMAT.md`), `EvidenceCrypto` (AES-256-GCM en bloques de 1 MB con nonce y AAD derivados del índice, más SHA-256 en la misma pasada), `EvidenceKeys` (DEK por fichero + envoltorios), hashes persistidos en el manifest y descifrador Python de referencia. Validado en la unidad: 20,3 MB en 397 ms, descifrado idéntico byte a byte | `81f0995` | No | Reparto por app decidido el 26-ago |
+| 2026-08-25 | AN | AN-1 | 3.0 | Cifrado y hash de la evidencia, **port al teléfono**: `EvidenceCrypto` y `EvidenceKeys` idénticos a los de la bodycam salvo el alias de Keystore, `.fev` fuera de la galería y SHA-256 real en lugar de los hashes simulados. Validado en el Redmi Note 8 Pro: 21,6 MB en 303 ms, mismo descifrador. Retirados los 3 incidentes de ejemplo | _(sin commitear)_ | No | Reparto por app decidido el 26-ago |
+| 2026-08-26 | BC | BC-6 | 4.0 | Subida por bloques reanudable: cliente tus 1.0.0 (4 operaciones, backoff, reanudación por offset del servidor), sesión persistida, config por fichero, servidor stub con corte inyectable y contrato para backend. Clave `srv:` de desarrollo activada — **la evidencia deja de subirse en claro**. Validado en la unidad: 9 incidentes, 61,9 MB, corte inyectado, corte real de WiFi y reanudación tras reinicio | _(sin commitear)_ | No | Marcas de tiempo 13:29–15:56 |
+| 2026-08-26 | AN | AN-1 | 3.0 | Destinatario `srv:` del teléfono alineado con el de la unidad y validado en hardware: cifra para los dos, el servidor lo abre y el hash de Room es el real | _(sin commitear)_ | No | Marcas de tiempo 13:29–15:56 |
+| 2026-08-26 | AN | AN-1 | 2.0 | Subida por bloques portada al teléfono: `data/upload/` completo, enganche en foto, vídeo y audio, reconciliación del estado de sincronización. Validado con un vídeo de 68 MB con corte y reanudación, más dos ficheros retomados solos al arrancar | _(sin commitear)_ | No | Marcas de tiempo 20:50–22:01 |
+| 2026-08-27 | BC | BC-1 | 1.0 | Inventario de entrega a backend: revisión del contrato de subida, formato de cifrado y manifest. Detectados 4 huecos (esquema del `manifest.json` sin documentar, falta juego de muestra, endpoint HTTPS + CA, rechazo de `kid dev-*`) | — | No | **Estimado** |
+| 2026-08-27 | BC | BC-1 | 1.0 | Firma de release: keystore único de proyecto (PKCS12, RSA 4096), `signingConfig` vía `local.properties`, versión 1.2→1.3 (code 4), APK firmado y verificado (v2) | _(sin commitear)_ | No | **Estimado** |
+| 2026-08-27 | AN | AN-1 | 1.0 | Firma de release con el mismo keystore, versión 1.0→1.1 (code 2), APK firmado y verificado. R8 con minify | _(sin commitear)_ | No | **Estimado** |
+| 2026-08-29 | AN | AN-1 | 3.0 | Bóveda con contraseña: `EvidenceVault`, RSA + PBKDF2 + Keystore, destinatarios de clave. Captura fuera de la galería: `LocalEvidenceRepository` sin MediaStore y borrado del claro. Pantalla Evidence Vault, `VaultRepository` y entrada desde Profile | _(sin commitear)_ | No | Del Excel |
+| 2026-08-30 | AN | AN-1 | 2.0 | Reproductor de audio dentro de la app y nota de audio enlazada al cerrar el incidente. Clasificación de la nota + cierre encadenado; pruebas con adb | _(sin commitear)_ | No | Del Excel |
+| 2026-09-08 | BC | BC-8 | 2.8 | **PTT por Agora en la bodycam.** Botón F2 medido por logcat: el broadcast solo llega al **soltar**, el firmware inyecta `KEYCODE_BACK` al segundo de mantenerlo y auto-repite con la Activity en foco — por eso es conmutador y no mantener-para-hablar. Una sola puerta en `BtServerService`, sesión **solo audio** que no toca la cámara ni dispara SOS, cesión del micrófono al anillo (conflicto de captura medido: warning 1033 / error 1165) y watchdog de captura para que nunca diga ON transmitiendo silencio. Contrato nuevo con el móvil: `BTN_PTT_ON`/`BTN_PTT_OFF` y campo `"ptt"` en `STATUS`. Validado en la unidad | _(sin commitear)_ | No | Marcas de fichero 12:33–16:39 · reparto por app estimado |
+| 2026-09-08 | AN | AN-4 | 1.5 | **Recepción del PTT en el teléfono:** excepción de escucha al uid 9001 (con `autoSubscribeAudio = false` la bodycam publicaba y no la oía nadie), estado por `onRemoteAudioStateChanged` tratando FROZEN como voz viva, y banda de aviso `PttAvisoOverlay` por encima de la navegación pero por debajo del SOS. Verificado con la W1 y el Redmi a la vez, sin SOS fantasma | _(sin commitear)_ | No | Marcas de fichero 12:33–16:53 · reparto por app estimado |
+| 2026-09-08 | AN | AN-4 | 0.5 | **PTT propio del teléfono:** botón mantener-para-hablar en Operations (descomentado y conectado), publicación del micrófono en caliente y anuncio `ptt_on`/`ptt_off` por el data stream — sin él la voz sale y no la oye nadie, porque el uid del teléfono es aleatorio y no se puede cablear como el 9001. Compila; **sin probar en aparatos**. `DEVLOG.md` y `docs/bodycam-contexto.md` actualizados | _(sin commitear)_ | No | Marcas de fichero 17:40–18:10 |
+|  |  | **TOTAL** | **54.8** |  |  |  | **1096 €** |
+
+
+> ### ⚠️ Días de septiembre SIN REGISTRAR — no facturar desde este archivo sin cerrarlos
+>
+> Entre el 30-ago y el 8-sep hubo trabajo que **no está en esta tabla ni en el Excel**, porque
+> nunca se anotaron sus horas. Lo que se sabe de cada día:
+>
+> | Fecha | Trabajo | Horas |
+> |---|---|---|
+> | 2026-09-03 | Sistema de autenticación IAM | **4.0 estimadas** — sin confirmar |
+> | 2026-09-04 | Workflow 12 (alta del teléfono) + adelantos de UX | ~2.0 de reloj (10:25–12:31) |
+> | 2026-09-06 | Hito del 15 completo: workflows 3, 4, 27, 13, 31, 33 y 34 | **4.4 de reloj** |
+> | 2026-09-07 | Gafas BleeqUp: enlace BT y análisis de cifrado del vídeo | sin anotar |
+>
+> Son **~10,4 h medidas más el 7-sep y la confirmación del 3-sep**. Están descritas en el
+> `DEVLOG.md` de AeriaNexusPrototype y en la memoria `horas-septiembre-2026`, pero no
+> imputadas. Hasta cerrarlas, el total de **54,8 h** de arriba es un **suelo**, no la cifra real.
 |  |  |  |  |  |  |  |  |
 
 ---
@@ -395,38 +435,38 @@ Las horas se llevan **separadas por aplicación** y el total del proyecto es su 
 
 | Aplicación | Horas | Importe | Nota |
 |---|---|---|---|
-| BodyCamServer | **31.0** | **620 €** | 09 y 14-ago reconstruidos; del 15-ago en adelante registrados — ver §0.A |
-| AeriaNexusPrototype | **1.7** | **34 €** | Cifrado portado y validado el 25-ago; destinatario `srv:` alineado el 26-ago — ver §0.B |
-| **TOTAL** | **32.7** | **654 €** | Pendiente de facturar |
+| BodyCamServer | **38.8** | **776 €** | 09 y 14-ago reconstruidos, 27-ago estimado; el resto registrado — ver §0.A |
+| AeriaNexusPrototype | **16.0** | **320 €** | Del 25-ago al 30-ago y el 08-sep — ver §0.B |
+| **TOTAL** | **54.8** | **1096 €** | Pendiente de facturar · **suelo**: faltan el 3, 4, 6 y 7 de septiembre |
 
 ### Desde la última entrega (2026-08-09)
 
 | Aplicación | Horas | Importe | Nota |
 |---|---|---|---|
-| BodyCamServer | **25.0** | **500 €** | 14, 15, 16, 23, 25 y 26 de agosto (el 09-ago está dentro de la entrega `d4a4709`) |
-| AeriaNexusPrototype | **1.7** | **34 €** | 25 y 26 de agosto |
-| **TOTAL** | **26.7** | **534 €** | |
+| BodyCamServer | **32.8** | **656 €** | 14, 15, 16, 23, 25, 26 y 27-ago y 08-sep (el 09-ago está dentro de la entrega `d4a4709`) |
+| AeriaNexusPrototype | **16.0** | **320 €** | 25, 26, 27, 29 y 30-ago y 08-sep |
+| **TOTAL** | **48.8** | **976 €** | |
 
 ### Acumulado del proyecto
 
 | Aplicación | Horas registradas | Importe | Horas reales |
 |---|---|---|---|
-| BodyCamServer | **31.0** | **620 €** | _mayor — el histórico previo al 09-ago no se registró, ver §7_ |
-| AeriaNexusPrototype | **1.7** | **34 €** | _mayor — ver §7_ |
-| **TOTAL PROYECTO** | **32.7** | **654 €** | _mayor que lo registrado_ |
+| BodyCamServer | **38.8** | **776 €** | _mayor — el histórico previo al 09-ago no se registró, ver §7_ |
+| AeriaNexusPrototype | **16.0** | **320 €** | _mayor — ver §7_ |
+| **TOTAL PROYECTO** | **54.8** | **1096 €** | _mayor que lo registrado_ |
 
 ### Objetivo de facturación — cierre de septiembre 2026
 
 | Concepto | Horas | Importe |
 |---|---|---|
-| Registrado a 2026-08-26 | 32.7 | 654 € |
+| Registrado a 2026-09-08 | 54.8 | 1096 € |
 | Objetivo mínimo | 100.0 | **2000 €** |
-| **Pendiente de generar** | **67.3** | **1346 €** |
+| **Pendiente de generar** | **45.2** | **904 €** |
 
-Con 30 h/semana comprometidas, las **67,3 h** restantes se cubren en **2,2 semanas**: el
-umbral de los 2000 € se cruza alrededor del **miércoles 9 de septiembre de 2026**. La ventana
-completa (25-ago → 30-sep = 5 semanas + 1 día) da capacidad para **~154 h**, es decir hasta
-~184 h acumuladas = **~3680 €** si se llena por completo.
+Con 30 h/semana comprometidas, las **45,2 h** restantes se cubren en **~1,5 semanas**: el
+umbral de los 2000 € se cruza alrededor del **viernes 18 de septiembre de 2026**. Y esa fecha
+es **conservadora**: las horas del 3, 4, 6 y 7 de septiembre (~10,4 h medidas más dos días sin
+medir) todavía no están imputadas, así que en cuanto se cierren el umbral se adelanta.
 
 ---
 
