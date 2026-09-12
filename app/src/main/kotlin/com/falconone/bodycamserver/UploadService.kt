@@ -72,7 +72,10 @@ class UploadService : IntentService("FalconUploadService") {
          */
         fun resumePending(context: Context) {
             if (!UploadConfig.enabled()) return
-            val pending = EvidenceStore.incidentIds().filter { !isDelivered(it) }
+            // También los entregados con el proxy aún en la unidad: el proxy va antes
+            // que el original, así que si falló y el original no, se quedaría sin subir.
+            val pending = EvidenceStore.incidentIds()
+                .filter { !isDelivered(it) || IncidentProxy.pending(it) != null }
             if (pending.isEmpty()) return
             Log.d(TAG, "reanudando ${pending.size} incidente(s) sin entregar")
             pending.forEach { id ->
@@ -152,7 +155,9 @@ class UploadService : IntentService("FalconUploadService") {
      * y no se borra nada.
      */
     private fun uploadIncidentChunked(incidentId: String, lat: Double, lon: Double) {
-        if (isDelivered(incidentId)) {
+        val originalDelivered = isDelivered(incidentId)
+        val proxy = IncidentProxy.pending(incidentId)
+        if (originalDelivered && proxy == null) {
             Log.d(TAG, "$incidentId ya entregado — nada que hacer")
             return
         }
@@ -162,7 +167,7 @@ class UploadService : IntentService("FalconUploadService") {
             Log.e(TAG, "$incidentId no tiene fichero que subir")
             return
         }
-        if (!payload.encrypted) {
+        if (!payload.encrypted && !originalDelivered) {
             // Merece un aviso: significa que el cifrado falló al cerrar y que la
             // evidencia está saliendo de la unidad en claro.
             Log.w(TAG, "$incidentId se sube SIN cifrar — no hay .fev")
@@ -180,6 +185,13 @@ class UploadService : IntentService("FalconUploadService") {
         if (lat != 0.0 || lon != 0.0) {
             base["latitude"] = lat.toString()
             base["longitude"] = lon.toString()
+        }
+
+        // Solo queda el proxy: el original llegó en una pasada anterior en la que el
+        // proxy falló.
+        if (originalDelivered) {
+            proxy?.let { uploadProxy(incidentId, it, base) }
+            return
         }
 
         // 1. Manifest. Si falla no se aborta: el vídeo es la evidencia, el manifest
@@ -205,7 +217,11 @@ class UploadService : IntentService("FalconUploadService") {
             if (!outcome.delivered) Log.w(TAG, "$incidentId: manifest no subido (${outcome.error})")
         }
 
-        // 2. Evidencia.
+        // 2. Proxy, antes que el original: es lo que procesa el backend y pesa
+        //    varias veces menos, así que llega aunque la red no dé para más.
+        proxy?.let { uploadProxy(incidentId, it, base) }
+
+        // 3. Evidencia.
         notify("$incidentId — ${payload.file.name}")
         val outcome = ChunkedUploader.upload(
             file = payload.file,
@@ -237,6 +253,47 @@ class UploadService : IntentService("FalconUploadService") {
                 Log.e(TAG, "$incidentId sin entregar: ${outcome.error}")
                 notify("$incidentId pendiente — se reanudará")
             }
+        }
+    }
+
+    /**
+     * Sube el proxy y, si el servidor no contradice su hash, lo borra: no es
+     * evidencia, y desde ese momento la copia que vale es la del backend. Lo que lo
+     * enlaza con su original sale del bloque `proxy` del manifest.
+     */
+    private fun uploadProxy(incidentId: String, fev: File, base: Map<String, String>) {
+        val info = EvidenceStore.manifestOf(incidentId)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?.optJSONObject("proxy")
+        if (info == null) {
+            Log.w(TAG, "$incidentId: el proxy no está en el manifest — no se puede enlazar, se deja")
+            return
+        }
+        notify("$incidentId — proxy")
+        val sha = info.optString("sha256_cipher").ifBlank { EvidenceCrypto.sha256(fev) }
+        val outcome = ChunkedUploader.upload(
+            file = fev,
+            fingerprint = sha,
+            metadata = base + mapOf(
+                "kind" to "proxy",
+                "filename" to fev.name,
+                "encrypted" to "true",
+                "crypto_format" to "FEVD1",
+                "sha256_cipher" to sha,
+                "sha256_plain" to info.optString("sha256_plain"),
+                "proxy_of" to info.optString("proxy_of"),
+                "proxy_short_side" to minOf(info.optInt("width"), info.optInt("height")).toString(),
+                "proxy_fps" to info.optInt("fps").toString(),
+            ),
+        )
+        when {
+            outcome.delivered && outcome.verified == false ->
+                Log.e(TAG, "$incidentId: el servidor NO confirma el hash del proxy — se conserva")
+            outcome.delivered -> {
+                if (!fev.delete()) Log.w(TAG, "$incidentId: no se pudo borrar el proxy entregado")
+                Log.d(TAG, "$incidentId: proxy entregado y borrado de la unidad")
+            }
+            else -> Log.e(TAG, "$incidentId: proxy sin entregar (${outcome.error}) — se reintentará")
         }
     }
 

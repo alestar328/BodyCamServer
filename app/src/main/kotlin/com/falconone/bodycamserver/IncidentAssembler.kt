@@ -25,6 +25,10 @@ private const val TAG = "FalconAssembler"
  * desplazando sus marcas de tiempo (remux). El coste es de I/O — del orden de
  * copiar el fichero — no de CPU, que en este SoC es lo que no sobra.
  *
+ * Hasta el 2026-09-11 aquí se quemaba también el rótulo del oficial, y eso SÍ
+ * recodificaba: la evidencia sellada era una segunda generación del vídeo. El
+ * rótulo pasó al proxy (IncidentProxy); el original sale como lo grabó la cámara.
+ *
  * Corre en un hilo propio tras cerrar el grabador: el anillo ya está rearmado
  * y escribe en buffer/, esto solo lee y escribe en incidents/<id>/.
  */
@@ -46,36 +50,21 @@ object IncidentAssembler {
         }
 
         val startMillis = EvidenceStore.startMillisOf(segments.first())
-        val rotation = rotationOf(segments.first())
+        // Un solo segmento ya es el vídeo final, con su nombre de evidencia: no hay
+        // nada que coser.
+        if (segments.size == 1) return segments[0]
+
         // Extensión .tmp mientras se construye: incidentSegments() y el servidor
         // HTTP solo miran .mp4, así que nadie puede listar ni subir un vídeo a
         // medio coser.
         val work = File(EvidenceStore.incidentDir(incidentId), "assembling.tmp")
         work.delete()
-
-        // Primero el camino completo: coser Y quemar el rótulo del oficial en
-        // los frames (re-encodado por hardware — ver VideoStamper). Pasa también
-        // con un solo segmento: el rótulo va siempre.
-        val stamped = try {
-            VideoStamper.stampAndConcat(segments, work, HardcodedOfficer, rotation)
+        try {
+            remux(segments, work)
         } catch (e: Exception) {
-            Log.e(TAG, "stamp de $incidentId falló: ${e.message}")
-            false
-        }
-
-        if (!stamped) {
-            // Red de seguridad: remux sin rótulo. La evidencia manda — antes un
-            // vídeo sin rótulo que ningún vídeo.
+            Log.e(TAG, "ensamblado de $incidentId falló: ${e.message} — se conservan los segmentos")
             work.delete()
-            Log.w(TAG, "$incidentId: sin rótulo, se ensambla por remux")
-            if (segments.size == 1) return segments[0]
-            try {
-                remux(segments, work)
-            } catch (e: Exception) {
-                Log.e(TAG, "ensamblado de $incidentId falló: ${e.message} — se conservan los segmentos")
-                work.delete()
-                return null
-            }
+            return null
         }
 
         // Solo cuando el fichero final está completo se retiran las piezas. El
@@ -168,7 +157,8 @@ object IncidentAssembler {
         }
     }
 
-    private fun rotationOf(segment: File): Int {
+    /** Rotación que el MP4 declara en sus metadatos. La usa también el proxy. */
+    fun rotationOf(segment: File): Int {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(segment.absolutePath)

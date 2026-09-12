@@ -288,11 +288,12 @@ class RecordingActivity : ComponentActivity() {
     }
 
     /**
-     * Ensambla el incidente en un hilo propio y, al terminar, cifra el vídeo,
-     * escribe el manifest (ya sobre el vídeo único, con los hashes dentro), lo
-     * anuncia a la galería y desbloquea la subida. Va fuera del hilo principal:
-     * coser un incidente largo son segundos de I/O y el anillo ya está
-     * rearmándose por debajo.
+     * Ensambla el incidente en un hilo propio y, al terminar, cifra el vídeo, hace
+     * su proxy, escribe el manifest (ya sobre el vídeo único, con los hashes
+     * dentro), lo anuncia a la galería y desbloquea la subida. Va fuera del hilo
+     * principal: coser un incidente largo son segundos de I/O, el proxy tarda
+     * aproximadamente lo que dura el vídeo, y el anillo ya está rearmándose por
+     * debajo.
      *
      * El cifrado va aquí y no durante la grabación por dos razones: la unidad ya
      * se calienta grabando, y hasta el ensamblado no existe el fichero definitivo
@@ -305,7 +306,12 @@ class RecordingActivity : ComponentActivity() {
             val file = IncidentAssembler.assemble(id)
             val sealed = file?.let { EvidenceCrypto.seal(it) }
             if (file != null && sealed == null) Log.e(TAG, "$id quedó SIN cifrar")
-            EvidenceStore.writeManifest(id, armedAt, trigger, stopped, sealed)
+            // El proxy sale del original en claro, que la unidad conserva (EVD-007).
+            // Va detrás del cifrado: el hash de custodia no espera a nada.
+            val proxy = file?.let {
+                IncidentProxy.make(id, it, proxyOf = sealed?.plainSha256 ?: EvidenceCrypto.sha256(it))
+            }
+            EvidenceStore.writeManifest(id, armedAt, trigger, stopped, sealed, proxy)
             file?.let {
                 MediaScannerConnection.scanFile(
                     applicationContext, arrayOf(it.absolutePath), arrayOf("video/mp4"), null
@@ -548,17 +554,17 @@ class RecordingActivity : ComponentActivity() {
                 fail("No hay cámaras"); return
             }
 
-            sensorOrientation = manager
-                .getCameraCharacteristics(cameraId)
-                .get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+            val characteristics = manager.getCameraCharacteristics(cameraId)
+            sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             applyPreviewTransform(sensorOrientation)
+            val profile = RecordingProfile.choose(characteristics)
 
             // Restos de una sesión anterior no tienen continuidad temporal con
             // esta: presentarlos como pre-roll juntaría dos momentos distintos.
             EvidenceStore.clearRing()
             armedAtMillis = System.currentTimeMillis()
 
-            val recorder = buildRecorder() ?: return
+            val recorder = buildRecorder(profile) ?: return
 
             val st = textureView.surfaceTexture ?: run {
                 fail("SurfaceTexture nula"); recorder.release(); return
@@ -618,8 +624,9 @@ class RecordingActivity : ComponentActivity() {
     /**
      * MediaRecorder configurado para rotar solo. La rotación es por tamaño
      * porque la API no avisa por duración: solo existe MAX_FILESIZE_APPROACHING.
+     * Tamaño y bitrate salen de [RecordingProfile]: 1080p si la cámara lo ofrece.
      */
-    private fun buildRecorder(): MediaRecorder? {
+    private fun buildRecorder(profile: RecordingProfile): MediaRecorder? {
         val first = EvidenceStore.newBufferSegment()
         return try {
             MediaRecorder().apply {
@@ -628,11 +635,11 @@ class RecordingActivity : ComponentActivity() {
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setVideoEncoder(MediaRecorder.VideoEncoder.H264)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setVideoSize(1280, 720)
+                setVideoSize(profile.width, profile.height)
                 setVideoFrameRate(30)
-                setVideoEncodingBitRate(4_000_000)
+                setVideoEncodingBitRate(profile.bitRate)
                 setOrientationHint((sensorOrientation + 270) % 360)  // 90°→0° ajuste bodycam
-                setMaxFileSize(EvidenceStore.SEGMENT_BYTES)
+                setMaxFileSize(EvidenceStore.segmentBytes(profile.bitRate))
                 setOutputFile(first.absolutePath)
                 setOnInfoListener { _, what, _ -> onRecorderInfo(what) }
                 setOnErrorListener { _, what, extra ->
@@ -641,7 +648,7 @@ class RecordingActivity : ComponentActivity() {
                 prepare()
             }.also {
                 inFlight = first
-                Log.d(TAG, "recorder listo, primer segmento ${first.name}")
+                Log.d(TAG, "recorder listo a ${profile.label}, primer segmento ${first.name}")
             }
         } catch (e: Exception) {
             fail("No se pudo preparar el grabador: ${e.message}")

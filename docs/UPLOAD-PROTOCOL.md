@@ -186,7 +186,9 @@ Sent on create, same for both apps.
 
 | Key | Example | Notes |
 |---|---|---|
-| `kind` | `evidence` \| `manifest` | Two uploads per incident, see §6 |
+| `kind` | `evidence` \| `manifest` \| `proxy` | Up to three uploads per incident, see §6 |
+| `proxy_of` | 64 hex | `kind=proxy` only: `sha256_plain` of the original |
+| `proxy_short_side` / `proxy_fps` | `720` / `15` | `kind=proxy` only |
 | `incident_id` | `INC_000009` | Monotonic per device, gaps are meaningful |
 | `filename` | `36975_20260826_1731.mp4.fev` | Officer badge, date, time |
 | `sha256_cipher` | 64 hex | Of the uploaded bytes — what §4 verifies |
@@ -204,16 +206,22 @@ Keep the header limit in mind: this is ~600 bytes, well under the usual 8 KB.
 
 ---
 
-## 6. Two uploads per incident, in this order
+## 6. Up to three uploads per incident, in this order
 
 1. **`manifest.json`** (`kind=manifest`, a few KB) — segment timeline, pre-roll
    window, trigger offset, officer identity, both hashes, and the crypto block.
    It goes first on purpose: it is small, it arrives immediately, and it tells
-   you what is coming and what hash to expect.
-2. **The evidence file** (`kind=evidence`) — the `.fev`, or the plaintext MP4 if
-   encryption failed.
+   you what is coming and what hash to expect. Its `proxy` block describes the
+   proxy below.
+2. **The proxy** (`kind=proxy`, 720p short side, 15 fps, officer label burned in) —
+   a lightweight copy for LLM processing. Not evidence; the unit deletes it once
+   delivered. Linked to the original by `proxy_of`. Missing if it could not be
+   made. Full contract: `docs/BACKEND-PROXY-AND-SOS.md` in the Nexus repo.
+3. **The evidence file** (`kind=evidence`) — the `.fev`, or the plaintext MP4 if
+   encryption failed. Since 2026-09-11 it is **not re-encoded**: no officer
+   label, exactly what the camera wrote.
 
-Both are tied together by `incident_id`. An incident with a manifest and no
+All are tied together by `incident_id`. An incident with a manifest and no
 evidence is an upload still in flight — expected, not an error.
 
 ---

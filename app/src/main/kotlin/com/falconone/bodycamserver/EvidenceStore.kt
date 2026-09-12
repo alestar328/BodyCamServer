@@ -29,14 +29,19 @@ private const val TAG = "FalconStore"
 object EvidenceStore {
 
     /**
-     * Tamaño de segmento. La rotación de MediaRecorder es por tamaño, no por
-     * duración: la API solo emite MEDIA_RECORDER_INFO_MAX_FILESIZE_APPROACHING,
-     * no existe el equivalente de duración. A 4 Mbps de vídeo más AAC (~516 KB/s)
-     * esto son unos 15 s, pero la duración real varía con la escena y el cálculo
-     * del pre-roll no depende de ella: se resuelve con los instantes de inicio
-     * reales embebidos en el nombre.
+     * Tamaño de segmento para un bitrate de vídeo dado: el que da unos
+     * [SEGMENT_SECONDS] s. La rotación de MediaRecorder es por tamaño, no por
+     * duración: la API solo emite MEDIA_RECORDER_INFO_MAX_FILESIZE_APPROACHING, no
+     * existe el equivalente de duración. Por eso depende del bitrate: los 8 MB fijos
+     * de antes eran 15 s a 720p y serían 8 s a 1080p. La duración real varía con la
+     * escena y el pre-roll no depende de ella: se resuelve con los instantes de
+     * inicio reales embebidos en el nombre.
      */
-    const val SEGMENT_BYTES = 8L * 1024 * 1024
+    fun segmentBytes(videoBitRate: Int): Long =
+        (videoBitRate.toLong() + AUDIO_BITRATE_ALLOWANCE) / 8 * SEGMENT_SECONDS
+
+    private const val SEGMENT_SECONDS = 15
+    private const val AUDIO_BITRATE_ALLOWANCE = 128_000L
 
     /**
      * Ventana que el anillo garantiza tener disponible al pulsar grabar.
@@ -202,6 +207,16 @@ object EvidenceStore {
     fun incidentDir(incidentId: String): File =
         File(incidentsDir, incidentId).also { it.mkdirs() }
 
+    /**
+     * Carpeta del proxy del incidente (ver IncidentProxy). Es una subcarpeta y no un
+     * fichero más junto a la evidencia porque [incidentSegments], el servidor HTTP y
+     * el manifest listan los .mp4 del incidente: ahí el proxy pasaría por evidencia.
+     * No se crea al consultarla.
+     */
+    fun proxyDir(incidentId: String): File = File(File(incidentsDir, incidentId), PROXY_DIR)
+
+    private const val PROXY_DIR = "proxy"
+
     /** Incidentes más recientes primero. */
     fun incidentIds(): List<String> =
         incidentsDir.listFiles { f -> f.isDirectory }
@@ -299,6 +314,7 @@ object EvidenceStore {
         triggerMillis: Long,
         stoppedMillis: Long,
         sealed: EvidenceCrypto.Sealed? = null,
+        proxy: IncidentProxy.Result? = null,
     ) {
         val segments = incidentSegments(incidentId)
         val origin = segments.firstOrNull()?.let { startMillisOf(it) } ?: triggerMillis
@@ -361,6 +377,21 @@ object EvidenceStore {
                     put("plain_retained", !EvidenceCrypto.DELETE_PLAINTEXT)
                     put("elapsed_ms", s.elapsedMillis)
                     put("recipients", JSONArray(s.recipients))
+                })
+            }
+
+            // Copia ligera para el backend, hecha del original. No es evidencia:
+            // proxy_of es el sha256_plain del original, que es lo que las enlaza.
+            // UploadService lee de aquí lo que declara al subirla.
+            proxy?.let { p ->
+                put("proxy", JSONObject().apply {
+                    put("encrypted_filename", p.sealed.file.name)
+                    put("sha256_plain", p.sealed.plainSha256)
+                    put("sha256_cipher", p.sealed.cipherSha256)
+                    put("proxy_of", p.proxyOf)
+                    put("width", p.width)
+                    put("height", p.height)
+                    put("fps", p.fps)
                 })
             }
         }

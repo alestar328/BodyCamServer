@@ -30,15 +30,20 @@ private const val TAG = "FalconStamper"
 private const val TIMEOUT_US = 10_000L
 
 /**
- * Une los segmentos de un incidente en un único MP4 **quemando el rótulo del
- * oficial en los frames**.
+ * Hace el **proxy** de un incidente: la copia ligera para el backend, a 720 de
+ * lado corto y 15 fps, **con el rótulo del oficial quemado en los frames**.
  *
  * El firmware de esta unidad no trae watermark (verificado: ni el HAL de
  * Spreadtrum ni las apps del fabricante lo soportan), así que la única vía es
  * re-encodar: cada frame se decodifica, se le dibuja el rótulo encima por
- * OpenGL y se vuelve a codificar. Decodificador y encoder H.264 son hardware
- * — la unidad graba 720p30 en tiempo real, así que esto corre aprox. a la
- * velocidad del vídeo. El audio no se toca: se copian sus muestras tal cual.
+ * OpenGL y se vuelve a codificar. Decodificador y encoder H.264 son hardware,
+ * así que esto corre aprox. a la velocidad del vídeo. El audio no se toca: se
+ * copian sus muestras tal cual.
+ *
+ * Por re-encodar, esto ya no se aplica al original (hasta el 2026-09-11 sí, y la
+ * evidencia sellada era una segunda generación): solo a su copia. El escalado a
+ * 720 sale gratis del mismo dibujo por OpenGL, que pinta el frame al tamaño de
+ * salida, y la bajada a 15 fps es no pasar al encoder la mitad de los frames.
  *
  * El pipeline (patrón decode-edit-encode estándar de Android):
  *
@@ -52,18 +57,22 @@ private const val TIMEOUT_US = 10_000L
  */
 object VideoStamper {
 
+    const val PROXY_SHORT_SIDE = 720
+    const val PROXY_FPS = 15
+    private const val PROXY_BITRATE = 1_500_000
+
     /**
-     * @param segments segmentos en orden cronológico, misma sesión de encoder.
-     * @param out fichero final (se crea aquí).
-     * @return true si el vídeo quedó completo en [out].
+     * @param source el original ya ensamblado.
+     * @param out fichero del proxy (se crea aquí).
+     * @return true si el proxy quedó completo en [out].
      */
-    fun stampAndConcat(
-        segments: List<File>,
+    fun makeProxy(
+        source: File,
         out: File,
         officer: Officer,
         rotationDegrees: Int = 0,
     ): Boolean {
-        if (segments.isEmpty()) return false
+        val segments = listOf(source)
 
         // Formatos de referencia: del primer segmento salen tamaño y pistas.
         val probe = MediaExtractor()
@@ -81,19 +90,19 @@ object VideoStamper {
             probe.release()
         }
         val vFormat = videoFormat ?: run { Log.e(TAG, "sin pista de vídeo"); return false }
-        val width = vFormat.getInteger(MediaFormat.KEY_WIDTH)
-        val height = vFormat.getInteger(MediaFormat.KEY_HEIGHT)
+        val (width, height) = proxySize(
+            vFormat.getInteger(MediaFormat.KEY_WIDTH),
+            vFormat.getInteger(MediaFormat.KEY_HEIGHT),
+        )
 
         var encoder: MediaCodec? = null
         var muxer: MediaMuxer? = null
         var gl: StampSurface? = null
         try {
-            // Mismos parámetros que la captura: la calidad no cambia entre lo
-            // grabado y lo ensamblado.
             val outFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, 4_000_000)
-                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+                setInteger(MediaFormat.KEY_BIT_RATE, PROXY_BITRATE)
+                setInteger(MediaFormat.KEY_FRAME_RATE, PROXY_FPS)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
             encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
@@ -107,9 +116,10 @@ object VideoStamper {
             muxer.setOrientationHint(rotationDegrees)
 
             val state = MuxState(muxer, audioFormat)
+            val dropper = FrameDropper(PROXY_FPS)
             var offsetUs = 0L
             for (segment in segments) {
-                offsetUs = transcodeSegment(segment, encoder, gl, state, offsetUs)
+                offsetUs = transcodeSegment(segment, encoder, gl, state, dropper, offsetUs)
             }
 
             // Fin: EOS al encoder y drenar lo que quede.
@@ -174,6 +184,7 @@ object VideoStamper {
         encoder: MediaCodec,
         gl: StampSurface,
         state: MuxState,
+        dropper: FrameDropper,
         offsetUs: Long,
     ): Long {
         val extractor = MediaExtractor()
@@ -255,11 +266,12 @@ object VideoStamper {
                 val outIdx = decoder.dequeueOutputBuffer(info, TIMEOUT_US)
                 if (outIdx >= 0) {
                     val eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    val render = info.size > 0
+                    val ptsUs = info.presentationTimeUs + offsetUs
+                    // Un frame descartado ni se pinta ni llega al encoder: así se
+                    // baja de 30 a 15 fps sin tocar las marcas de los que quedan.
+                    val render = info.size > 0 && dropper.keep(ptsUs)
                     decoder.releaseOutputBuffer(outIdx, render)
-                    if (render) {
-                        gl.awaitFrameAndStamp((info.presentationTimeUs + offsetUs) * 1000)
-                    }
+                    if (render) gl.awaitFrameAndStamp(ptsUs * 1000)
                     if (eos) outputDone = true
                 }
 
@@ -273,6 +285,19 @@ object VideoStamper {
         }
         // El siguiente segmento continúa tras la duración real de este.
         return offsetUs + segmentEndUs
+    }
+
+    /**
+     * Lado corto a [PROXY_SHORT_SIDE], sin agrandar nunca, y el largo en proporción
+     * redondeado a múltiplo de 16, que es lo que el encoder de este SoC traga sin
+     * rellenar. 1920x1080 da 1280x720; el 1920x1088 de la W1 da 1264x720.
+     */
+    fun proxySize(width: Int, height: Int): Pair<Int, Int> {
+        val shortSide = minOf(width, height)
+        if (shortSide <= PROXY_SHORT_SIDE) return width to height
+        val longSide = maxOf(width, height).toLong() * PROXY_SHORT_SIDE / shortSide
+        val longAligned = ((longSide + 8) / 16 * 16).toInt()
+        return if (width >= height) longAligned to PROXY_SHORT_SIDE else PROXY_SHORT_SIDE to longAligned
     }
 
     private fun drainEncoder(encoder: MediaCodec, state: MuxState, untilEos: Boolean) {
@@ -294,6 +319,30 @@ object VideoStamper {
                 else -> if (!untilEos) return
             }
         }
+    }
+}
+
+/**
+ * Deja pasar [fps] frames por segundo siguiendo un calendario fijo: se queda el
+ * primer frame que llega a cada cita, y la siguiente cita se fija desde la
+ * anterior, no desde el frame guardado.
+ *
+ * Contarlos desde el último guardado fallaba con la W1, que a 1080p entrega unos
+ * 24 fps y no 30 (medido el 2026-09-11): con citas "a 50 ms del último" se
+ * quedaba justo uno de cada dos y el proxy salía a 12 fps. Con calendario la media
+ * es la pedida venga la cámara a la frecuencia que venga.
+ */
+private class FrameDropper(fps: Int) {
+    private val intervalUs = 1_000_000L / fps
+    private var nextUs = Long.MIN_VALUE
+
+    fun keep(ptsUs: Long): Boolean {
+        if (ptsUs < nextUs) return false
+        // Tras un hueco (el primer frame, o un corte largo) el calendario se
+        // reinicia; si no, habría una ráfaga de frames seguidos "recuperando" citas.
+        val calendarioPerdido = nextUs == Long.MIN_VALUE || ptsUs - nextUs > intervalUs
+        nextUs = if (calendarioPerdido) ptsUs + intervalUs else nextUs + intervalUs
+        return true
     }
 }
 

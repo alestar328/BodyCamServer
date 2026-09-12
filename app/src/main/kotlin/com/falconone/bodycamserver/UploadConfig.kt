@@ -87,6 +87,16 @@ object UploadConfig {
         return if (raw.isBlank() || raw.endsWith("/")) raw else "$raw/"
     }
 
+    /**
+     * Base de la API del backend: hoy solo los avisos del SOS (SosNotifier), con la
+     * clave `api_url` del mismo upload.conf. Vacía mientras no se configure, por el
+     * mismo motivo que [DEFAULT_BASE_URL].
+     */
+    fun apiUrl(): String {
+        val raw = conf()["api_url"].orEmpty()
+        return if (raw.isBlank() || raw.endsWith("/")) raw else "$raw/"
+    }
+
     fun token(): String = conf()["token"]?.takeIf { it.isNotBlank() } ?: DEFAULT_TOKEN
 
     fun chunkBytes(): Int =

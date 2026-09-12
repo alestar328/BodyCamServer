@@ -108,6 +108,8 @@ object LivestreamService {
                 // significar "en buffer" (ver enterArmed) y no pueden compartir
                 // color: emitir es precisamente cuando NO hay anillo.
                 HardwareController.ledYellowBlink()
+                // Mientras emite, la unidad no graba: que lo grabe el backend.
+                appContext?.let { SosNotifier.inicio(it) }
             }
             override fun onLeaveChannel(stats: IRtcEngineEventHandler.RtcStats?) {
                 Log.d(TAG, "Left channel")
@@ -249,6 +251,7 @@ object LivestreamService {
             pttOwnsSession = false
             isStreaming    = true
             HardwareController.ledYellowBlink()
+            SosNotifier.inicio(context)
             true
         } catch (e: Exception) {
             Log.e(TAG, "No se pudo ascender la sesión de PTT: ${e.message}")
@@ -484,6 +487,7 @@ object LivestreamService {
         } finally {
             engine = null
             isStreaming = false
+            SosNotifier.fin()
             // El PTT se apoyaba en esta sesión: al cerrarla el micro se va con ella.
             // El anillo lo rearma resumeServiceAfter, más abajo, así que aquí solo
             // se descarta la intención heredada para no rearmar dos veces.
