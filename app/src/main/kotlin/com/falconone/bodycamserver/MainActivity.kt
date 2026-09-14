@@ -186,7 +186,7 @@ class MainActivity : ComponentActivity() {
 
     // El SOS de la bodycam es el livestream (mismo comportamiento que la tecla F3):
     // pulsar emite, volver a pulsar corta, y el teléfono lo detecta por Agora
-    // (uid 9001 → null).
+    // (el vídeo de esta unidad aparece y desaparece del canal).
     private fun toggleLivestream() {
         if (LivestreamService.isStreaming) {
             // En hilo propio: stop() destruye el RtcEngine y rearma el anillo.

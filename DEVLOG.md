@@ -10,6 +10,104 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-14 — La unidad se deja encontrar 5 minutos al arrancar
+
+### Por qué
+
+Nexus ya no lleva la MAC de la W1 metida al compilar: el agente busca su bodycam desde la
+app. Pero la W1 está por defecto en `SCAN_MODE_CONNECTABLE`: acepta a quien ya sabe su
+MAC y **no aparece en una búsqueda**. Un teléfono nuevo, como el del manager, no la
+encontraba nunca.
+
+### Hecho
+
+- **`VisibilidadBluetooth.kt`** (nuevo): pone `SCAN_MODE_CONNECTABLE_DISCOVERABLE` durante
+  300 s con el método oculto `BluetoothAdapter.setScanMode(int, int)`, por reflexión. La
+  vía pública (`ACTION_REQUEST_DISCOVERABLE`) saca un diálogo del sistema que habría que
+  aceptar en la pantalla de la unidad, y el panel se opera a ciegas.
+- Se llama desde `BtServerService.onStartCommand`, **solo al arrancar el servidor** (se
+  enciende la unidad o se abre la app). El tiempo es limitado a propósito: una unidad
+  policial anunciándose todo el día se podría seguir por la calle.
+- **La duración que se pasa a `setScanMode` no se cumple.** La pila la anota
+  (`Discoverable Timeout:300`) pero en Android 9 el temporizador lo lleva la app de
+  Ajustes: medido, la W1 seguía visible a los 8 minutos. La propia clase la vuelve a
+  `SCAN_MODE_CONNECTABLE` con un `postDelayed`. Límite conocido: si el proceso muere
+  dentro de esos 5 minutos, la unidad sigue visible hasta el siguiente arranque.
+
+### Estado: VERIFICADO EN LA W1
+
+- `setScanMode` devuelve true; la pila BT registra `Discoverable Timeout:300` y `Scan Mode:23`.
+  El firmware no aplica las restricciones de API oculta (hasta la *dark greylist* enlaza).
+- El Samsung, **desemparejado**, encuentra DSJ-ZXAN9A1 y conecta.
+- Se oculta sola a los 5 minutos **con la pantalla apagada** (`Modo de escaneo 21: true`,
+  vuelta a `SCAN_MODE_CONNECTABLE`). El temporizador corre porque el servicio tiene el
+  `PARTIAL_WAKE_LOCK` `FalconOne::BtServer`: si algún día se quita, este `postDelayed`
+  dejaría de contar en reposo.
+
+### Cada unidad con su uid de Agora
+
+Hasta hoy todas entraban como `9001`: dos a la vez se echaban del canal, y el teléfono no
+distinguía su bodycam de la de otro agente (silenciaba el SOS ajeno).
+
+- **`BodycamIdentity.uidAgora`**: `10000 + sufijo hexadecimal del BWC`. Esta W1
+  (`BWC-896E`) entra como **45182**. No es un segundo identificador: si las identidades son
+  distintas, los números también. Rango 10000-75535, por debajo del grabador en la nube
+  (90000-99999). Si el sufijo no tiene formato hexadecimal de 4 cifras, se reparte por
+  hash y se registra un error.
+- Lo usan los dos `joinChannel` de `LivestreamService`, el `stream_uid` del STATUS
+  (`Rsp.status` pierde sus valores por defecto y recibe el uid) y `SosNotifier`, que además
+  manda `bwc_id` al backend.
+- Actualizado el contrato 5 de `.claude/agents/coherencia-bodycam-movil.md`.
+
+**Verificado:** `Joined falcon_group_channel uid=45182`; SOS, PTT y visor funcionan contra
+el Samsung con el Nexus nuevo (detalle en su DEVLOG). Un Nexus antiguo **no** reconoce este
+uid: hay que actualizar las dos apps juntas.
+
+### Medición: la unidad escuchando el canal mientras graba
+
+**`SondaEscuchaPtt.kt`**, solo en debug. Se registra en `BtServerService` bajo
+`BuildConfig.DEBUG` y se maneja por broadcast:
+
+    adb shell am broadcast -a com.falconone.bodycamserver.SONDA_PTT --es orden escuchar|parar|bateria
+
+Entra en el canal como **audiencia**, con `enableLocalAudio(false)` antes del join,
+`autoSubscribeAudio = true` y salida por el altavoz. **No se puede usar a la vez que el SOS
+o el PTT**: Agora admite un solo motor por proceso, y el `RtcEngine.destroy()` de
+`LivestreamService` se llevaría también el de la sonda.
+
+**Resultado (VERIFICADO):**
+- En `dumpsys media.audio_flinger`, **la única entrada sigue siendo la del anillo**
+  (sesión 281, `Sil n`), antes, durante y después de escuchar. Agora no abre el micro.
+- El modo de audio sigue en NORMAL y la entrada tarda 293 ms.
+- PTT del Samsung desde otra habitación, 05:34:05-27 (hora de la W1):
+  - Agora lo reproduce, con volumen hasta 168.
+  - El usuario lo oye bien por el altavoz.
+  - En los segmentos del anillo queda grabado a -11/-20 dB, y vuelve a -54 dB al acabar.
+- Salir del canal no tocó el anillo, al contrario que el incidente del 08-sep: aquella vez
+  Agora sí capturaba.
+- Para analizar se copiaron los segmentos con un bucle por adb que vuelve a copiar si cambia
+  el tamaño. Copiando solo una vez, uno de cada tres salía ilegible: se copiaba mientras
+  `MediaRecorder` cerraba el fichero. El análisis se hizo con PyAV y numpy en el PC.
+
+**Sin medir:**
+- La batería: la medición de 20 min se lanzó, pero se aparcó sin analizar. CSV en
+  `Android/data/com.falconone.bodycamserver/files/sonda_ptt_bateria.csv`.
+- La latencia de extremo a extremo.
+
+**Hallazgo lateral, sin tocar:** el audio de la evidencia va a **8.000 Hz mono**. `buildRecorder` no
+llama a `setAudioSamplingRate` ni a `setAudioEncodingBitRate`, y `MediaRecorder` cae en su
+valor por defecto. Para evidencia policial conviene subirlo (44,1 o 48 kHz), pero afecta
+al tamaño de los segmentos y hay que medirlo.
+
+### Próximo paso
+
+- **PTT del teléfono sonando en la unidad**: requisitos cerrados el 14-sep y la medición clave
+  sale bien. Construirlo, con un motor de Agora compartido entre la escucha, el SOS y el PTT
+  de la unidad.
+- Decidir la frecuencia de audio de la evidencia (ver arriba).
+
+---
+
 ## 2026-09-11 — Original a 1080p sin recodificar, proxy de 720p/15 y aviso del SOS al backend
 
 ### Por qué

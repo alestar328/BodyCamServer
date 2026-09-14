@@ -127,8 +127,8 @@ class BtServerService : Service() {
     // puerta y el conmutador es fiable.
     //
     // The physical SOS button (133) is wired to LIVESTREAM on purpose: the bodycam
-    // joining Agora (uid 9001) IS the SOS signal the phone reacts to. In Falcon One,
-    // BTN_STREAM_* / uid-9001-live == SOS popup. Normal recording (134) stays local
+    // joining Agora with video IS the SOS signal the phone reacts to. In Falcon One,
+    // BTN_STREAM_* / bodycam video live == SOS popup. Normal recording (134) stays local
     // and must NEVER raise SOS on the phone. Do NOT swap F3/F4 — this matches the
     // hardware (we flip-flopped twice before the logcat settled it).
     private val sideKeyReceiver = object : BroadcastReceiver() {
@@ -246,12 +246,18 @@ class BtServerService : Service() {
         registerReceiver(smokeKeyReceiver, IntentFilter().apply { smokeKeyActions.forEach { addAction(it) } })
         acquireWifiLock()
         connectivityHandler.post(connectivityChecker)
+        // Medicion del PTT hacia la unidad (2026-09-14). Se registra en el contexto de
+        // la aplicacion para que sobreviva a un reinicio del servicio.
+        if (BuildConfig.DEBUG) SondaEscuchaPtt.registrar(applicationContext)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!isRunning) {
             isRunning = true
             executor.execute(::acceptLoop)
+            // Solo al arrancar el servidor, que es cuando se enciende la unidad o se
+            // abre la app: es el momento en que alguien la esta buscando.
+            VisibilidadBluetooth.hacerVisible()
         }
         Log.d(TAG, "BtServerService onStartCommand")
         return START_STICKY
@@ -449,7 +455,8 @@ class BtServerService : Service() {
                 PreviewController.isActive,
                 RecordingActivity.serviceRequested,
                 RecordingActivity.state.name,
-                LivestreamService.isMicEnabled
+                LivestreamService.isMicEnabled,
+                BodycamIdentity.uidAgora(this),
             )
 
             Cmd.STREAM_START -> {

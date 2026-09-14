@@ -51,6 +51,8 @@ object Rsp {
     fun ok(cmd: String) = "OK:$cmd\n"
     fun error(msg: String) = "ERROR:$msg\n"
     fun pong() = "PONG\n"
-    fun status(recording: Boolean, battery: Int, storage: Long, wifi: Boolean, api: Boolean, ip: String = "", streaming: Boolean = false, preview: Boolean = false, armed: Boolean = false, captureState: String = "IDLE", ptt: Boolean = false) =
-        "STATUS:{\"recording\":$recording,\"battery\":$battery,\"storage_mb\":$storage,\"wifi\":$wifi,\"api\":$api,\"file_server_ip\":\"$ip\",\"file_server_port\":$FILE_SERVER_PORT,\"streaming\":$streaming,\"stream_uid\":$BODYCAM_UID,\"stream_channel\":\"$AGORA_CHANNEL\",\"preview\":$preview,\"armed\":$armed,\"capture_state\":\"$captureState\",\"ptt\":$ptt}\n"
+    // stream_uid es el numero de ESTA unidad en Agora: el telefono lo usa para
+    // distinguir su propia bodycam de la de otros agentes.
+    fun status(recording: Boolean, battery: Int, storage: Long, wifi: Boolean, api: Boolean, ip: String, streaming: Boolean, preview: Boolean, armed: Boolean, captureState: String, ptt: Boolean, streamUid: Int) =
+        "STATUS:{\"recording\":$recording,\"battery\":$battery,\"storage_mb\":$storage,\"wifi\":$wifi,\"api\":$api,\"file_server_ip\":\"$ip\",\"file_server_port\":$FILE_SERVER_PORT,\"streaming\":$streaming,\"stream_uid\":$streamUid,\"stream_channel\":\"$AGORA_CHANNEL\",\"preview\":$preview,\"armed\":$armed,\"capture_state\":\"$captureState\",\"ptt\":$ptt}\n"
 }

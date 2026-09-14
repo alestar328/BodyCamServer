@@ -16,7 +16,6 @@ private const val TAG = "FalconLive"
 
 const val AGORA_APP_ID  = "ff51540c357447f7bf060b3150bf6a3e"
 const val AGORA_CHANNEL = "falcon_group_channel"
-const val BODYCAM_UID   = 9001
 
 object LivestreamService {
 
@@ -30,7 +29,7 @@ object LivestreamService {
      * La sesión de Agora abierta la abrió el PTT en modo solo-audio, no el
      * livestream. Distingue el caso "hay engine pero no hay vídeo": no marca
      * isStreaming, no enciende el LED de emisión y no levanta el SOS en los
-     * teléfonos — que reaccionan al vídeo de uid 9001 (onRemoteVideoStateChanged),
+     * teléfonos — que reaccionan al vídeo de una bodycam (onRemoteVideoStateChanged),
      * no a su mera presencia en el canal.
      */
     @Volatile private var pttOwnsSession = false
@@ -207,7 +206,7 @@ object LivestreamService {
 
             // null token — only works if App Certificate is NOT enabled in Agora console.
             // If you see error code 101/110, enable "No Auth" in the Agora project settings.
-            eng.joinChannel(null, AGORA_CHANNEL, BODYCAM_UID, options)
+            eng.joinChannel(null, AGORA_CHANNEL, BodycamIdentity.uidAgora(context), options)
             true
         } catch (e: Exception) {
             Log.e(TAG, "start failed: ${e.message}")
@@ -411,7 +410,7 @@ object LivestreamService {
                 autoSubscribeVideo     = false
                 autoSubscribeAudio     = false
             }
-            eng.joinChannel(null, AGORA_CHANNEL, BODYCAM_UID, options)
+            eng.joinChannel(null, AGORA_CHANNEL, BodycamIdentity.uidAgora(context), options)
             _micEnabled = true
             Log.d(TAG, "PTT mic ON (sesión solo-audio)")
             vigilarCaptura()

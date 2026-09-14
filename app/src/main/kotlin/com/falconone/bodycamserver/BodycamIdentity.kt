@@ -49,6 +49,8 @@ object BodycamIdentity {
     private const val CURVA = "secp256r1"
     private const val PREFS = "aeria_bwc_identity"
     private const val CLAVE_BWC_ID = "bwc_id"
+    private const val PRIMER_UID_AGORA = 10_000
+    private const val MAYOR_SUFIJO = 0xFFFF
     private const val CARPETA = "identity"
     private const val FICHERO_CSR = "bwc.csr.pem"
     private const val FICHERO_ANCLA = "ca.pem"
@@ -70,6 +72,31 @@ object BodycamIdentity {
         val sufijo = ByteArray(2).also { SecureRandom().nextBytes(it) }
             .joinToString("") { "%02X".format(it) }
         return "BWC-$sufijo".also { prefs.edit().putString(CLAVE_BWC_ID, it).apply() }
+    }
+
+    /**
+     * Numero con el que la unidad entra en el canal de Agora, sacado de su
+     * identidad: BWC-896E entra como 10000 + 0x896E = 45182.
+     *
+     * Antes todas las unidades entraban como 9001. Con dos a la vez en el canal
+     * Agora echa a una, y el telefono no podia distinguir su bodycam de la de otro
+     * agente: silenciaba el SOS ajeno creyendo que era el propio.
+     *
+     * No es un segundo identificador: si las identidades son distintas, los numeros
+     * tambien. El rango 10000-75535 queda por debajo del grabador en la nube
+     * (90000-99999), y los telefonos empiezan en 100000. Si el registro de AeriaOne
+     * cambia el formato del identificador, solo hay que tocar esta funcion.
+     */
+    fun uidAgora(context: Context): Int {
+        val identificador = bwcId(context)
+        val sufijo = identificador.removePrefix("BWC-")
+        val valorHex = sufijo.toIntOrNull(16)?.takeIf { it <= MAYOR_SUFIJO }
+        if (valorHex != null) return PRIMER_UID_AGORA + valorHex
+
+        // Un formato que no sea de cuatro cifras hexadecimales ya no garantiza que
+        // no choque con otra unidad: se reparte por el rango y se deja constancia.
+        Log.e(TAG, "Identificador con formato inesperado: $identificador")
+        return PRIMER_UID_AGORA + Math.floorMod(sufijo.hashCode(), MAYOR_SUFIJO + 1)
     }
 
     /**

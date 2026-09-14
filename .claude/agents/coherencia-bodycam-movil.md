@@ -44,8 +44,14 @@ teléfono leyendo `null` **en silencio**, sin excepción y sin log. Búscalo act
 `/incidents`, `/incidents/{id}`, `/preview`, `/preview/stream`, `/benchmark`. Si la bodycam
 renombra o retira una ruta que el teléfono pide, el fallo aparece en runtime.
 
-**5 · Livestream Agora.** Canal `falcon_group_channel` y uid `9001` en los dos lados
-(`LivestreamService.kt` y `AgoraRepository.kt`). Si divergen, no se ven.
+**5 · Livestream Agora.** Canal `falcon_group_channel` en los dos lados
+(`LivestreamService.kt` y `AgoraRepository.kt`). Desde el 2026-09-14 **cada bodycam tiene
+su uid**: la bodycam lo calcula en `BodycamIdentity.uidAgora` (10000 + sufijo hexadecimal
+del BWC, rango 10000-75535) y lo manda en `stream_uid` del STATUS; el teléfono reconoce
+bodycams por rango en `AgoraRepository.esBodycam` (10000-89999, más el 9001 antiguo) y su
+bodycam propia por `stream_uid`. Comprueba que el rango que calcula la bodycam cabe en el
+que acepta el teléfono y que ninguno pisa el del grabador en la nube (90000-99999). Si
+divergen, el teléfono deja de ver el SOS de la bodycam **sin ningún error**.
 
 **6 · Evidencia cifrada — formato FEVD v1.** El contrato está en
 `BodyCamServer/docs/CRYPTO-FORMAT.md` y es **normativo**. `EvidenceCrypto.kt` y
