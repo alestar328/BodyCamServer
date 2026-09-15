@@ -899,7 +899,7 @@ class RecordingActivity : ComponentActivity() {
      */
     private fun toggleSos() {
         Thread {
-            if (LivestreamService.isStreaming) {
+            if (LivestreamService.sosActivo) {
                 LivestreamService.stop()
             } else {
                 PreviewController.stop()

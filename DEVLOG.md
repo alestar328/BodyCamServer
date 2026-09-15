@@ -10,6 +10,87 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-15 — La unidad escucha el canal todo el tiempo (punto 1 del PTT hacia la bodycam)
+
+### Por qué
+
+Primer paso del PTT del teléfono sonando en la W1: la unidad tiene que estar dentro del
+canal para oír a nadie. Hasta hoy solo entraba mientras emitía (SOS o su propio PTT), con
+`autoSubscribeAudio = false`, y salía con `RtcEngine.destroy()`.
+
+### Hecho
+
+- **`LivestreamService`**: un solo motor, creado al arrancar y destruido solo al cerrar el
+  servicio (`escuchar()` / `salirDelCanal()`).
+  - Entra como **audiencia**, con `enableLocalAudio(false)` antes del join,
+    `autoSubscribeAudio = true` y salida por el altavoz. Es lo que midió la sonda.
+  - **El SOS y el PTT ya no entran ni salen:** suben a broadcaster con
+    `updateChannelMediaOptions` y bajan a audiencia al terminar. Solo `aplicarPublicacion()`
+    decide el rol, a partir de `isStreaming` y del micro.
+  - El PTT abre y cierra el micro con `enableLocalAudio(true/false)`. Antes usaba
+    `enableAudio/disableAudio`, que ahora cortaría también la escucha.
+  - Desaparecen `openPttSession`, `closePttSession` y `upgradePttSessionToVideo`: sin
+    sesiones propias no hay nada que ascender.
+  - **SOS sin red:** queda pedido (`sosActivo`) y sale al volver a entrar al canal. Los
+    tres botones de SOS (F3, panel y buffer) miran `sosActivo` para poder cortarlo mientras
+    espera.
+  - **Conexión perdida** (`CONNECTION_STATE_FAILED`): reentra cada 10 s. Si el PTT estaba
+    abierto, se cierra y se avisa, porque ya no llega a nadie. Los cortes de red normales
+    los recupera Agora solo.
+- **`BtServerService`**: llama a `escuchar()` en `onCreate` y a `salirDelCanal()` en
+  `onDestroy`.
+- **`SondaEscuchaPtt`**: deja de tener motor propio, que chocaría con el compartido. Solo
+  mide la batería, sacando a la unidad del canal y volviéndola a meter.
+
+**Los teléfonos no notan el cambio:** la audiencia no les llega por `onUserJoined`, así que
+siguen viendo a la unidad solo cuando emite.
+
+### Estado: VERIFICADO EN LA W1 (sin teléfono)
+
+- Al arrancar: `Joined falcon_group_channel uid=45182 en 318 ms (escuchando)`.
+- **El micro sigue siendo del anillo:** en `audio_flinger` hay una sola pista de entrada (8 kHz,
+  sin silenciar), creada antes de que Agora entrase.
+- **PTT de la unidad** (broadcast 132 ×2): corta el anillo, captura sin que salte el
+  vigilante, cierra y rearma el anillo al primer intento. Al acabar, otra vez una sola pista.
+- **SOS** (broadcast 133 ×2): `SOS en el aire`, Agora abre la cámara y el codificador; al
+  cortarlo `Livestream stopped (sigue escuchando: true)`, anillo rearmado y cámara devuelta.
+  Tras el SOS entra al canal el uid 73777, que coincide con el aviso al backend.
+- La unidad recibió eventos de audio de dos uids de teléfono que había en el canal
+  (1940146813 y 1974208822), cuyo audio alternaba entre publicado y silenciado cada pocos
+  segundos.
+
+**PTT del Samsung → W1 (VERIFICADO):** con el PTT mantenido 8 s, la W1 registra
+`Audio de 250828848: estado 1 → 2` (DECODING) y al soltar pasa a `estado 0 motivo 5`.
+Mientras suena, la pista del anillo sigue siendo la única entrada y no está silenciada, y
+Agora reproduce por una pista de salida a 48 kHz.
+
+**Trampa encontrada en la prueba, del lado de Nexus:** los primeros intentos no llegaban
+porque **el Samsung llevaba fuera del canal desde la 01:44**. Perdió la red a la 01:24,
+Agora reintentó 20 min y dio `onConnectionFailure` (estado 5, motivo 4). Nexus no vuelve a
+entrar y **sigue mostrando ONLINE**: el agente pulsa, oye sus tonos, ve ON AIR y no le oye
+nadie. Se vio en `agoraapi.log` del teléfono, que va sin cifrar, al contrario que
+`agorasdk.log`. Con la app reiniciada entró como 250828848 y funcionó. **Sin arreglar en
+Nexus:** hace falta la misma reentrada que tiene hoy la unidad.
+
+**Sin verificar:**
+- Que la voz se oiga bien por el altavoz en esta prueba: el log confirma que se decodificó,
+  pero falta que lo confirme alguien que estuviera escuchando.
+- PTT del teléfono con un incidente grabando, y después de un SOS de la unidad. La sospecha
+  de "no oye tras el SOS" se explica por la trampa de arriba.
+- Un corte de red real y el `CONNECTION_STATE_FAILED` en la unidad.
+- La batería.
+
+### Próximo paso
+
+- Nexus: volver a entrar al canal tras `CONNECTION_STATE_FAILED` y no pintar ONLINE sin
+  estar dentro.
+- Probar el PTT del teléfono con la W1 grabando un incidente y después de un SOS.
+- **Punto 2:** que suene solo el PTT y no cualquier audio del canal. Hoy la unidad reproduce
+  todo lo que se publique, y los dos uids que se vieron publicando y silenciando serían
+  ruido.
+
+---
+
 ## 2026-09-14 — La unidad se deja encontrar 5 minutos al arrancar
 
 ### Por qué

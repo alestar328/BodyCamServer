@@ -188,8 +188,8 @@ class MainActivity : ComponentActivity() {
     // pulsar emite, volver a pulsar corta, y el teléfono lo detecta por Agora
     // (el vídeo de esta unidad aparece y desaparece del canal).
     private fun toggleLivestream() {
-        if (LivestreamService.isStreaming) {
-            // En hilo propio: stop() destruye el RtcEngine y rearma el anillo.
+        if (LivestreamService.sosActivo) {
+            // En hilo propio: stop() rearma el anillo.
             Thread { LivestreamService.stop() }.start()
         } else {
             // Feedback inmediato: entre ceder la cámara y el join de Agora pasan

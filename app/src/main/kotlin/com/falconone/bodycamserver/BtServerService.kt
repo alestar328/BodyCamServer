@@ -168,7 +168,7 @@ class BtServerService : Service() {
                     }
                 }
                 KeyEvent.KEYCODE_F3 -> executor.execute {
-                    if (LivestreamService.isStreaming) {
+                    if (LivestreamService.sosActivo) {
                         Log.d(TAG, "SideKey F3 → STREAM STOP")
                         LivestreamService.stop()
                         send(Ntf.STREAM_STOP)
@@ -246,7 +246,10 @@ class BtServerService : Service() {
         registerReceiver(smokeKeyReceiver, IntentFilter().apply { smokeKeyActions.forEach { addAction(it) } })
         acquireWifiLock()
         connectivityHandler.post(connectivityChecker)
-        // Medicion del PTT hacia la unidad (2026-09-14). Se registra en el contexto de
+        // La unidad escucha el canal todo el tiempo, para que el PTT de los teléfonos
+        // suene por su altavoz. En el executor: crear el RtcEngine tarda.
+        executor.execute { LivestreamService.escuchar(applicationContext) }
+        // Medicion de bateria de la escucha (2026-09-14). Se registra en el contexto de
         // la aplicacion para que sobreviva a un reinicio del servicio.
         if (BuildConfig.DEBUG) SondaEscuchaPtt.registrar(applicationContext)
     }
@@ -269,7 +272,7 @@ class BtServerService : Service() {
         isRunning = false
         HardwareController.irOff()
         HardwareController.ledOff()
-        LivestreamService.stop()
+        LivestreamService.salirDelCanal()
         PreviewController.stop()
         FileServerService.stop()
         connectivityHandler.removeCallbacks(connectivityChecker)

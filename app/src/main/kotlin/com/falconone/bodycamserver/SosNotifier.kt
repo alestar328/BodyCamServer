@@ -45,8 +45,8 @@ object SosNotifier {
     private var latido: ScheduledFuture<*>? = null
 
     /**
-     * Idempotente: el SOS puede arrancar por dos caminos (entrar al canal, o
-     * ascender la sesión del PTT a vídeo) y el backend no debe ver dos emergencias.
+     * Idempotente: el SOS puede salir al pedirlo o al volver la unidad al canal, y
+     * el backend no debe ver dos emergencias.
      */
     @Synchronized
     fun inicio(context: Context) {

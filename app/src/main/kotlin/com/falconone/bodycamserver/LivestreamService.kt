@@ -11,28 +11,53 @@ import io.agora.rtc2.video.CameraCapturerConfiguration
 import io.agora.rtc2.video.VideoEncoderConfiguration
 import io.agora.rtc2.video.VideoEncoderConfiguration.VideoDimensions
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "FalconLive"
 
 const val AGORA_APP_ID  = "ff51540c357447f7bf060b3150bf6a3e"
 const val AGORA_CHANNEL = "falcon_group_channel"
 
+/** Espera entre intentos de volver a entrar al canal cuando Agora lo da por perdido. */
+private const val REINTENTO_CANAL_SEGUNDOS = 10L
+
+/**
+ * La unidad en el canal de Agora: escucha siempre y emite cuando toca.
+ *
+ * Desde el 2026-09-15 la unidad **está en el canal todo el tiempo**, como audiencia y sin
+ * capturar, para que el PTT de los teléfonos suene por su altavoz (requisitos del
+ * 2026-09-14). El SOS y el PTT propio ya no entran ni salen: suben a broadcaster dentro
+ * de la misma sesión y bajan a audiencia al terminar.
+ *
+ * Un solo motor para todo porque Agora admite uno por proceso: un `RtcEngine.destroy()`
+ * del SOS se llevaría la escucha por delante.
+ *
+ * Medido con `SondaEscuchaPtt` antes de construirlo: como audiencia y con
+ * `enableLocalAudio(false)` Agora **no abre el micrófono**, y el anillo sigue grabando
+ * con su audio mientras suena la voz de fuera.
+ */
 object LivestreamService {
 
+    /** Agora está publicando la cámara: el SOS está en el aire. */
     @Volatile var isStreaming = false
         private set
 
     @Volatile private var _micEnabled = false
     val isMicEnabled get() = _micEnabled
 
+    /** La unidad está dentro del canal (escuchando, o además emitiendo). */
+    @Volatile var enCanal = false
+        private set
+
     /**
-     * La sesión de Agora abierta la abrió el PTT en modo solo-audio, no el
-     * livestream. Distingue el caso "hay engine pero no hay vídeo": no marca
-     * isStreaming, no enciende el LED de emisión y no levanta el SOS en los
-     * teléfonos — que reaccionan al vídeo de una bodycam (onRemoteVideoStateChanged),
-     * no a su mera presencia en el canal.
+     * Se ha pedido el SOS. Va por delante de [isStreaming], que solo se marca con la
+     * unidad dentro del canal: sin red el SOS espera y sale en cuanto Agora vuelve a
+     * entrar, en vez de perderse.
      */
-    @Volatile private var pttOwnsSession = false
+    @Volatile private var sosPedido = false
+
+    /** Hay un SOS pedido, en el aire o esperando al canal. Lo que miran los botones para cortarlo. */
+    val sosActivo get() = sosPedido
 
     /** El anillo estaba armado cuando el PTT le quitó el micro; hay que rearmarlo. */
     @Volatile private var pttResumeService = false
@@ -52,12 +77,13 @@ object LivestreamService {
     @Volatile var onPttDropped: ((String) -> Unit)? = null
 
     /**
-     * Cerrar el engine desde un callback del SDK lo bloquea, así que el cierre de
-     * emergencia del PTT se hace fuera del hilo de Agora.
+     * Tocar el engine desde un callback del SDK lo bloquea, así que el cierre de
+     * emergencia del PTT y los reintentos de entrada se hacen fuera del hilo de Agora.
      */
     private val pttWatchdog = Executors.newSingleThreadExecutor()
+    private val reintentos = Executors.newSingleThreadScheduledExecutor()
 
-    private var engine: RtcEngine? = null
+    @Volatile private var engine: RtcEngine? = null
 
     /** Contexto de aplicación, para poder rearmar el servicio al cerrar el stream. */
     private var appContext: Context? = null
@@ -97,22 +123,48 @@ object LivestreamService {
     private fun createEngine(context: Context): RtcEngine {
         val handler = object : IRtcEngineEventHandler() {
             override fun onJoinChannelSuccess(channel: String, uid: Int, elapsed: Int) {
-                Log.d(TAG, "Joined $channel uid=$uid (solo audio: $pttOwnsSession)")
-                // La sesión del PTT entra en el mismo canal pero no es una emisión:
-                // no toca isStreaming ni el LED, o el agente vería el amarillo de
-                // SOS solo por haber abierto el micro.
-                if (pttOwnsSession) return
-                isStreaming = true
-                // Amarillo parpadeando = emitiendo (SOS). El azul fijo pasó a
-                // significar "en buffer" (ver enterArmed) y no pueden compartir
-                // color: emitir es precisamente cuando NO hay anillo.
-                HardwareController.ledYellowBlink()
-                // Mientras emite, la unidad no graba: que lo grabe el backend.
-                appContext?.let { SosNotifier.inicio(it) }
+                Log.d(TAG, "Joined $channel uid=$uid en $elapsed ms (escuchando)")
+                enCanal = true
+                // Un SOS pedido sin red sale ahora. Fuera del hilo de Agora: publicar
+                // desde su callback lo bloquea.
+                if (sosPedido) pttWatchdog.execute { appContext?.let(::ponerSosEnElAire) }
+            }
+            override fun onRejoinChannelSuccess(channel: String, uid: Int, elapsed: Int) {
+                // Tras un corte de red Agora vuelve solo y conserva lo que se publicaba.
+                Log.d(TAG, "De vuelta en $channel tras un corte ($elapsed ms)")
+                enCanal = true
             }
             override fun onLeaveChannel(stats: IRtcEngineEventHandler.RtcStats?) {
                 Log.d(TAG, "Left channel")
+                enCanal = false
                 isStreaming = false
+            }
+            override fun onConnectionStateChanged(state: Int, reason: Int) {
+                Log.d(TAG, "Conexión con el canal: estado $state motivo $reason")
+                // Los cortes de red los reintenta Agora solo. FAILED es lo único que da
+                // por perdido (token, app id, expulsión) y ahí hay que volver a entrar,
+                // o la unidad se quedaría sorda hasta reiniciarla.
+                if (state != Constants.CONNECTION_STATE_FAILED) return
+                enCanal = false
+                // Se vuelve a entrar como audiencia: el SOS pedido se republica al
+                // entrar, pero un micro abierto ya no llega a nadie y hay que decirlo.
+                isStreaming = false
+                pttWatchdog.execute {
+                    if (!_micEnabled) return@execute
+                    val motivo = "La unidad perdió el canal — el PTT no transmite"
+                    lastPttError = motivo
+                    cerrarMicro()
+                    PttTones.denegado()
+                    onPttDropped?.invoke(motivo)
+                }
+                reintentos.schedule(::reentrar, REINTENTO_CANAL_SEGUNDOS, TimeUnit.SECONDS)
+            }
+            override fun onUserJoined(uid: Int, elapsed: Int) {
+                Log.d(TAG, "Entra al canal $uid")
+            }
+            override fun onRemoteAudioStateChanged(uid: Int, state: Int, reason: Int, elapsed: Int) {
+                // 2 = DECODING: la voz de ese uid está sonando por el altavoz.
+                Log.d(TAG, "Audio de $uid: estado $state motivo $reason")
             }
             override fun onError(err: Int) {
                 Log.e(TAG, "Agora error code: $err")
@@ -145,7 +197,7 @@ object LivestreamService {
                 Log.e(TAG, "PTT caído: $motivo")
                 lastPttError = motivo
                 pttWatchdog.execute {
-                    if (pttOwnsSession) closePttSession() else silenciarMicro()
+                    cerrarMicro()
                     // El micro ya está cerrado: el zumbido no viaja por el canal y
                     // el agente deja de hablarle a nadie.
                     PttTones.denegado()
@@ -162,25 +214,123 @@ object LivestreamService {
         return RtcEngine.create(config)
     }
 
-    fun start(context: Context): Boolean {
-        if (isStreaming) return true
+    /**
+     * Entra al canal a escuchar. Se llama al arrancar BtServerService y no se sale
+     * más: sin red Agora sigue intentándolo por su cuenta.
+     */
+    @Synchronized
+    fun escuchar(context: Context) {
+        if (engine != null) return
         appContext = context.applicationContext
-
-        // El PTT pudo abrir ya el canal en modo solo-audio. Esa sesión se asciende
-        // a vídeo en vez de rehacerla: un leave/rejoin cortaría el audio que el
-        // agente está usando en ese mismo momento.
-        engine?.let { eng -> if (pttOwnsSession) return upgradePttSessionToVideo(context, eng) }
-
-        yieldCamera(context)
-
-        return try {
-            val eng = createEngine(context)
-            engine = eng
-
+        try {
+            val eng = createEngine(context.applicationContext)
             eng.setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
-            eng.setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
-            eng.enableVideo()
+            eng.enableAudio()
+            // Antes de entrar: si la captura llega a arrancar le quita el micro al
+            // anillo, y la grabación se quedaría sin sonido.
+            eng.enableLocalAudio(false)
+            // Sin auricular previsto: la voz de fuera sale por el altavoz de la W1.
+            eng.setDefaultAudioRoutetoSpeakerphone(true)
+            engine = eng
+            val resultado = eng.joinChannel(
+                null, AGORA_CHANNEL, BodycamIdentity.uidAgora(context), opcionesDeEscucha()
+            )
+            Log.d(TAG, "Entrando al canal a escuchar: $resultado")
+            if (resultado < 0) reintentos.schedule(::reentrar, REINTENTO_CANAL_SEGUNDOS, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            // Sin motor no hay nada que reentrar: se vuelve a crear desde cero.
+            Log.e(TAG, "No se pudo entrar al canal a escuchar: ${e.message}")
+            engine = null
+            val ctx = context.applicationContext
+            reintentos.schedule({ escuchar(ctx) }, REINTENTO_CANAL_SEGUNDOS, TimeUnit.SECONDS)
+        }
+    }
 
+    /**
+     * Solo al cerrar el servicio. Es lo único que destruye el motor: a partir de aquí
+     * la unidad no oye el PTT de nadie.
+     */
+    @Synchronized
+    fun salirDelCanal() {
+        if (sosPedido || _micEnabled) stop()
+        try {
+            engine?.leaveChannel()
+            RtcEngine.destroy()
+        } catch (e: Exception) {
+            Log.e(TAG, "salirDelCanal: ${e.message}")
+        } finally {
+            engine = null
+            enCanal = false
+            Log.d(TAG, "Fuera del canal: la unidad ya no escucha")
+        }
+    }
+
+    /**
+     * Audiencia: no aparece para los demás en onUserJoined, así que los teléfonos no
+     * ven a la unidad hasta que emite, igual que antes de estar siempre dentro.
+     */
+    private fun opcionesDeEscucha() = ChannelMediaOptions().apply {
+        channelProfile         = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
+        clientRoleType         = Constants.CLIENT_ROLE_AUDIENCE
+        publishCameraTrack     = false
+        publishMicrophoneTrack = false
+        autoSubscribeAudio     = true
+        autoSubscribeVideo     = false  // la unidad no pinta el vídeo de nadie
+    }
+
+    /** Vuelve a entrar con el mismo motor cuando Agora da la conexión por perdida. */
+    private fun reentrar() {
+        val eng = engine ?: return
+        val ctx = appContext ?: return
+        eng.leaveChannel()
+        val resultado = eng.joinChannel(null, AGORA_CHANNEL, BodycamIdentity.uidAgora(ctx), opcionesDeEscucha())
+        Log.d(TAG, "Reentrando al canal: $resultado")
+        if (resultado < 0) reintentos.schedule(::reentrar, REINTENTO_CANAL_SEGUNDOS, TimeUnit.SECONDS)
+    }
+
+    /**
+     * Sube a broadcaster si hay algo que emitir y baja a audiencia si no. Es el único
+     * sitio que decide el rol: SOS y PTT lo comparten y cualquiera de los dos puede
+     * terminar antes que el otro.
+     */
+    private fun aplicarPublicacion(eng: RtcEngine) {
+        val emite = isStreaming || _micEnabled
+        eng.updateChannelMediaOptions(
+            ChannelMediaOptions().apply {
+                clientRoleType = if (emite) Constants.CLIENT_ROLE_BROADCASTER else Constants.CLIENT_ROLE_AUDIENCE
+                publishCameraTrack     = isStreaming
+                publishMicrophoneTrack = _micEnabled
+            }
+        )
+    }
+
+    fun start(context: Context): Boolean {
+        if (sosPedido) return true
+        appContext = context.applicationContext
+        if (engine == null) escuchar(context)
+        if (engine == null) return false
+
+        // Si el PTT ya había cortado el anillo, yieldCamera no lo verá y perdería la
+        // intención de rearmarlo. El SOS la hereda: a partir de aquí es él quien
+        // devuelve el pre-roll al terminar.
+        val anilloPendiente = pttResumeService
+        pttResumeService = false
+        yieldCamera(context)
+        if (anilloPendiente) resumeServiceAfter = true
+
+        sosPedido = true
+        if (enCanal) return ponerSosEnElAire(context)
+        Log.w(TAG, "SOS pedido fuera del canal: sale en cuanto Agora vuelva a entrar")
+        return true
+    }
+
+    /** Publica la cámara en la sesión de escucha, sin salir ni volver a entrar. */
+    @Synchronized
+    private fun ponerSosEnElAire(context: Context): Boolean {
+        val eng = engine ?: return false
+        if (!sosPedido || isStreaming) return true
+        return try {
+            eng.enableVideo()
             // Bodycam sensor is 90° — use rear camera and let Agora auto-detect orientation
             eng.setCameraCapturerConfiguration(
                 CameraCapturerConfiguration(CameraCapturerConfiguration.CAMERA_DIRECTION.CAMERA_REAR)
@@ -193,67 +343,20 @@ object LivestreamService {
                     VideoEncoderConfiguration.ORIENTATION_MODE.ORIENTATION_MODE_ADAPTIVE
                 )
             )
-
-            val options = ChannelMediaOptions().apply {
-                channelProfile         = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
-                clientRoleType         = Constants.CLIENT_ROLE_BROADCASTER
-                publishCameraTrack     = true
-                // El micro lo abre el PTT (botón F2), no el livestream.
-                publishMicrophoneTrack = false
-                autoSubscribeVideo     = false  // bodycam only sends, doesn't receive
-                autoSubscribeAudio     = false
-            }
-
-            // null token — only works if App Certificate is NOT enabled in Agora console.
-            // If you see error code 101/110, enable "No Auth" in the Agora project settings.
-            eng.joinChannel(null, AGORA_CHANNEL, BodycamIdentity.uidAgora(context), options)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "start failed: ${e.message}")
-            false
-        }
-    }
-
-    /**
-     * Añade vídeo a la sesión que el PTT ya tenía abierta, sin salir del canal.
-     * Como no se vuelve a entrar, onJoinChannelSuccess no se repite y el estado de
-     * emisión hay que marcarlo aquí a mano.
-     */
-    private fun upgradePttSessionToVideo(context: Context, eng: RtcEngine): Boolean {
-        Log.d(TAG, "Ascendiendo la sesión de PTT a livestream (micro abierto: $_micEnabled)")
-        // El PTT ya había cortado el anillo, así que yieldCamera no lo verá y
-        // perdería la intención de rearmarlo. El livestream la hereda: a partir de
-        // aquí es él quien devuelve el pre-roll al terminar.
-        val anilloPendiente = pttResumeService
-        pttResumeService = false
-        yieldCamera(context)
-        if (anilloPendiente) resumeServiceAfter = true
-        return try {
-            eng.enableVideo()
-            eng.setCameraCapturerConfiguration(
-                CameraCapturerConfiguration(CameraCapturerConfiguration.CAMERA_DIRECTION.CAMERA_REAR)
-            )
-            eng.setVideoEncoderConfiguration(
-                VideoEncoderConfiguration(
-                    VideoDimensions(640, 480),
-                    VideoEncoderConfiguration.FRAME_RATE.FRAME_RATE_FPS_15,
-                    700,
-                    VideoEncoderConfiguration.ORIENTATION_MODE.ORIENTATION_MODE_ADAPTIVE
-                )
-            )
-            eng.updateChannelMediaOptions(
-                ChannelMediaOptions().apply {
-                    publishCameraTrack     = true
-                    publishMicrophoneTrack = _micEnabled
-                }
-            )
-            pttOwnsSession = false
-            isStreaming    = true
+            // El micro no: lo abre el PTT (botón F2), no el livestream.
+            isStreaming = true
+            aplicarPublicacion(eng)
+            Log.d(TAG, "SOS en el aire (micro abierto: $_micEnabled)")
+            // Amarillo parpadeando = emitiendo (SOS). El azul fijo pasó a
+            // significar "en buffer" (ver enterArmed) y no pueden compartir
+            // color: emitir es precisamente cuando NO hay anillo.
             HardwareController.ledYellowBlink()
+            // Mientras emite, la unidad no graba: que lo grabe el backend.
             SosNotifier.inicio(context)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "No se pudo ascender la sesión de PTT: ${e.message}")
+            Log.e(TAG, "No se pudo poner el SOS en el aire: ${e.message}")
+            isStreaming = false
             false
         }
     }
@@ -265,40 +368,73 @@ object LivestreamService {
      * (SIDE_KEY_INTENT, con key_status siempre -1), así que el PTT no puede ser de
      * mantener-para-hablar: es un conmutador.
      *
-     * Con livestream abierto NO se toca la sesión: solo cambia
-     * publishMicrophoneTrack en caliente, sin leave/rejoin y sin rozar la cámara,
-     * para que el vídeo siga exactamente igual. Sin livestream se abre el canal en
-     * modo solo-audio, sin enableVideo() y sin pedirle la cámara al anillo, para
-     * que la grabación continua no se entere.
+     * No entra ni sale del canal: sube a broadcaster con el micro y vuelve a
+     * audiencia. Con SOS en el aire solo cambia el micro, sin rozar la cámara, para
+     * que el vídeo siga exactamente igual.
      */
     fun togglePtt(context: Context): Boolean {
         // Cada pulsación empieza sin arrastrar el fallo de la anterior, o cerrar el
         // micro se reportaría como un error que ya no existe.
         lastPttError = null
-        val eng = engine ?: return openPttSession(context)
-
-        _micEnabled = !_micEnabled
-        // El tono arranca antes de publicar el micro y después de cerrarlo, para
-        // que el pitido se quede en la unidad y no en lo que se transmite; del
-        // solape que quede se encarga el cancelador de eco de Agora.
         if (_micEnabled) {
-            PttTones.abrir()
-            eng.enableAudio()
-        }
-        eng.updateChannelMediaOptions(
-            ChannelMediaOptions().apply { publishMicrophoneTrack = _micEnabled }
-        )
-        if (!_micEnabled) {
-            eng.disableAudio()
+            cerrarMicro()
             PttTones.cerrar()
+            Log.d(TAG, "PTT mic OFF")
+            return false
         }
-        Log.d(TAG, "PTT mic ${if (_micEnabled) "ON" else "OFF"}")
+        return abrirMicro(context)
+    }
 
-        // El canal lo abrió el propio PTT: al cerrar el micro se sale, para soltar
-        // micrófono y red en vez de quedarse dentro sin publicar nada. Si el canal
-        // es de un livestream se conserva: cerrarlo sería precisamente interferir.
-        if (!_micEnabled && pttOwnsSession) closePttSession() else if (_micEnabled) vigilarCaptura()
-        return _micEnabled
+    private fun abrirMicro(context: Context): Boolean {
+        appContext = context.applicationContext
+        val eng = engine
+        // Un micro abierto fuera del canal no llega a nadie: el agente tiene que OÍR
+        // que no se ha abierto antes de ponerse a hablar.
+        if (eng == null || !enCanal) {
+            lastPttError = "La unidad no está en el canal — el PTT no transmite"
+            Log.w(TAG, "PTT rechazado: fuera del canal")
+            PttTones.denegado()
+            return false
+        }
+        // Con SOS el anillo ya cedió cámara y micro; sin él hay que pedírselo.
+        if (!sosPedido && !yieldMicForPtt(context)) {
+            PttTones.denegado()
+            return false
+        }
+        // Suena en cuanto el micro es nuestro y antes de publicar: es la confirmación
+        // de la pulsación y el pitido se queda en la unidad, no en lo que se transmite.
+        PttTones.abrir()
+        return try {
+            _micEnabled = true
+            aplicarPublicacion(eng)
+            eng.enableLocalAudio(true)
+            Log.d(TAG, "PTT mic ON")
+            vigilarCaptura()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "El PTT no pudo abrir el micro: ${e.message}")
+            lastPttError = "Agora no pudo abrir el micro"
+            cerrarMicro()
+            PttTones.denegado()
+            false
+        }
+    }
+
+    /**
+     * Cierra el micro sin salir del canal y devuelve el pre-roll si el PTT lo cortó.
+     * La captura se para antes de dejar de publicar, para soltar el micro cuanto antes.
+     */
+    private fun cerrarMicro() {
+        _micEnabled = false
+        engine?.let { eng ->
+            try {
+                eng.enableLocalAudio(false)
+                aplicarPublicacion(eng)
+            } catch (e: Exception) {
+                Log.e(TAG, "cerrarMicro: ${e.message}")
+            }
+        }
+        rearmarAnilloSiTocaba()
     }
 
     /**
@@ -317,7 +453,7 @@ object LivestreamService {
             val motivo = "El micrófono no está capturando — el PTT no transmite"
             Log.e(TAG, "PTT sin captura tras 3 s: se cierra")
             lastPttError = motivo
-            if (pttOwnsSession) closePttSession() else silenciarMicro()
+            cerrarMicro()
             PttTones.denegado()
             onPttDropped?.invoke(motivo)
         }
@@ -369,88 +505,15 @@ object LivestreamService {
         return true
     }
 
-    /** Cierra el micro sin tocar el canal (el canal es de un livestream). */
-    private fun silenciarMicro() {
-        val eng = engine ?: return
-        _micEnabled = false
-        eng.updateChannelMediaOptions(
-            ChannelMediaOptions().apply { publishMicrophoneTrack = false }
-        )
-        eng.disableAudio()
-    }
-
-    /** Entra en el canal solo con audio. No toca la cámara ni el LED. */
-    private fun openPttSession(context: Context): Boolean {
-        appContext = context.applicationContext
-        lastPttError = null
-        // No se consiguió el micro (incidente en curso, o el anillo sin soltarlo):
-        // el agente tiene que OÍR que no se ha abierto antes de ponerse a hablar.
-        if (!yieldMicForPtt(context)) {
-            PttTones.denegado()
-            return false
-        }
-        // Suena en cuanto el micro es nuestro y antes de levantar el engine: es la
-        // confirmación de la pulsación y no se solapa con la transmisión.
-        PttTones.abrir()
-        return try {
-            pttOwnsSession = true
-            val eng = createEngine(context)
-            engine = eng
-
-            eng.setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
-            eng.setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
-            eng.enableAudio()
-
-            val options = ChannelMediaOptions().apply {
-                channelProfile         = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
-                clientRoleType         = Constants.CLIENT_ROLE_BROADCASTER
-                // Sin vídeo: el anillo de grabación conserva la cámara.
-                publishCameraTrack     = false
-                publishMicrophoneTrack = true
-                autoSubscribeVideo     = false
-                autoSubscribeAudio     = false
-            }
-            eng.joinChannel(null, AGORA_CHANNEL, BodycamIdentity.uidAgora(context), options)
-            _micEnabled = true
-            Log.d(TAG, "PTT mic ON (sesión solo-audio)")
-            vigilarCaptura()
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "El PTT no pudo abrir el canal: ${e.message}")
-            lastPttError = "Agora no pudo abrir el canal"
-            engine = null
-            pttOwnsSession = false
-            _micEnabled = false
-            PttTones.denegado()
-            rearmarAnilloSiTocaba()
-            false
-        }
-    }
-
-    private fun closePttSession() {
-        try {
-            engine?.leaveChannel()
-            RtcEngine.destroy()
-        } catch (e: Exception) {
-            Log.e(TAG, "closePttSession: ${e.message}")
-        } finally {
-            engine = null
-            pttOwnsSession = false
-            _micEnabled = false
-            Log.d(TAG, "Sesión de PTT cerrada")
-            rearmarAnilloSiTocaba()
-        }
-    }
-
     /**
      * Devuelve el pre-roll al agente en cuanto el PTT suelta el micrófono.
      *
-     * `RtcEngine.destroy()` vuelve antes de que el módulo de audio de Agora haya
-     * soltado del todo la entrada, así que rearmar de inmediato pilla el micro a
-     * medio liberar: el 2026-09-08 eso dejó una sesión de captura colgada a 8 kHz
-     * que sobrevivió incluso a un `force-stop` y bloqueó a la vez el anillo y el
-     * PTT hasta reiniciar la unidad. Por eso se reintenta hasta que el anillo
-     * confirme que está capturando, en vez de dar el rearme por bueno.
+     * Agora vuelve de soltar la captura antes de que su módulo de audio haya liberado
+     * del todo la entrada, así que rearmar de inmediato pilla el micro a medio
+     * liberar: el 2026-09-08 eso dejó una sesión de captura colgada a 8 kHz que
+     * sobrevivió incluso a un `force-stop` y bloqueó a la vez el anillo y el PTT
+     * hasta reiniciar la unidad. Por eso se reintenta hasta que el anillo confirme
+     * que está capturando, en vez de dar el rearme por bueno.
      */
     private fun rearmarAnilloSiTocaba() {
         if (!pttResumeService) return
@@ -477,35 +540,35 @@ object LivestreamService {
         Log.e(TAG, "El anillo NO recuperó el micrófono tras el PTT — unidad sin pre-roll")
     }
 
+    /** Termina el SOS y vuelve a escuchar, sin salir del canal. */
     fun stop() {
-        try {
-            engine?.leaveChannel()
-            RtcEngine.destroy()
-        } catch (e: Exception) {
-            Log.e(TAG, "stop: ${e.message}")
-        } finally {
-            engine = null
-            isStreaming = false
-            SosNotifier.fin()
-            // El PTT se apoyaba en esta sesión: al cerrarla el micro se va con ella.
-            // El anillo lo rearma resumeServiceAfter, más abajo, así que aquí solo
-            // se descarta la intención heredada para no rearmar dos veces.
-            pttOwnsSession = false
-            pttResumeService = false
-            // Cerrar la emisión cierra también el micro del PTT: si estaba abierto,
-            // el agente tiene que oír que ha dejado de transmitir.
-            if (_micEnabled) PttTones.cerrar()
-            _micEnabled = false
-            LedSignals.refresh()
-            Log.d(TAG, "Livestream stopped")
+        sosPedido = false
+        // Cerrar la emisión cierra también el micro del PTT: si estaba abierto,
+        // el agente tiene que oír que ha dejado de transmitir.
+        val micAbierto = _micEnabled
+        _micEnabled = false
+        isStreaming = false
+        pttResumeService = false
+        engine?.let { eng ->
+            try {
+                eng.enableLocalAudio(false)
+                aplicarPublicacion(eng)
+                eng.disableVideo()
+            } catch (e: Exception) {
+                Log.e(TAG, "stop: ${e.message}")
+            }
+        }
+        if (micAbierto) PttTones.cerrar()
+        SosNotifier.fin()
+        LedSignals.refresh()
+        Log.d(TAG, "Livestream stopped (sigue escuchando: $enCanal)")
 
-            // Devolver la cámara al anillo si el agente tenía el servicio activo.
-            if (resumeServiceAfter) {
-                resumeServiceAfter = false
-                appContext?.let {
-                    Log.d(TAG, "Rearmando el servicio de grabación continua")
-                    RecordingActivity.arm(it)
-                }
+        // Devolver la cámara al anillo si el agente tenía el servicio activo.
+        if (resumeServiceAfter) {
+            resumeServiceAfter = false
+            appContext?.let {
+                Log.d(TAG, "Rearmando el servicio de grabación continua")
+                RecordingActivity.arm(it)
             }
         }
     }

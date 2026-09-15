@@ -29,11 +29,10 @@ private const val TAG = "FalconTone"
  * falta con el equipo puesto. La regla que los separa: **dos notas son tuyas,
  * una nota es de otro.**
  *
- * [entra] y [sale] no los usa la bodycam hoy: entra al canal con
- * `autoSubscribeAudio = false` y no oye a nadie — es una cámara, no una radio.
- * Viven aquí para que el vocabulario de tonos del sistema sea uno solo y las dos
- * copias sigan cuadrando; el día que se decida que la unidad reproduzca la voz de
- * los demás por su altavoz, el tono ya está.
+ * [entra] y [sale] no los usa la bodycam todavía. Desde el 2026-09-15 escucha el
+ * canal y reproduce la voz de los demás por su altavoz, pero aún no sabe cuándo
+ * alguien abre o suelta el PTT. Viven aquí para que el vocabulario de tonos del
+ * sistema sea uno solo y las dos copias sigan cuadrando.
  *
  * Se sintetizan en PCM en vez de tirar de ToneGenerator o de un .ogg: los tonos
  * de ToneGenerator son de telefonía (DTMF y supervisión) y no permiten la subida
