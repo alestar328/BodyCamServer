@@ -24,12 +24,13 @@ private const val TAG = "FalconTone"
  *   • [denegado]  zumbido grave doble      "NO se abrió — no te están oyendo"
  *   • [entra]     pitido agudo suelto      "otro ha abierto el canal"
  *   • [sale]      pitido medio suelto      "el otro ha soltado, canal libre"
+ *   • [pisando]   tres pitidos agudos      "hay dos micros abiertos a la vez"
  *
- * Los cinco se distinguen sin mirar y sin aprenderlos, que es justo lo que hace
+ * Los seis se distinguen sin mirar y sin aprenderlos, que es justo lo que hace
  * falta con el equipo puesto. La regla que los separa: **dos notas son tuyas,
- * una nota es de otro.**
+ * una nota es de otro, tres notas sois los dos.**
  *
- * [entra] y [sale] no los usa la bodycam todavía. Desde el 2026-09-15 escucha el
+ * [entra], [sale] y [pisando] no los usa la bodycam todavía. Desde el 2026-09-15 escucha el
  * canal y reproduce la voz de los demás por su altavoz, pero aún no sabe cuándo
  * alguien abre o suelta el PTT. Viven aquí para que el vocabulario de tonos del
  * sistema sea uno solo y las dos copias sigan cuadrando.
@@ -71,6 +72,13 @@ object PttTones {
 
     /** El que hablaba ha soltado: el canal queda libre. */
     fun sale() = reproducir(listOf(1046 to 90), AMPLITUD_RX)
+
+    /**
+     * Dos micros abiertos a la vez: el agente está hablando y otro ha abierto el
+     * canal encima, o al revés. Va a volumen pleno y no al de recepción porque
+     * tiene que oírse por encima de la propia voz.
+     */
+    fun pisando() = reproducir(listOf(1760 to 60, 0 to 40, 1760 to 60, 0 to 40, 1760 to 60))
 
     /** tramos = pares (frecuencia en Hz, duración en ms). Frecuencia 0 = silencio. */
     private fun reproducir(tramos: List<Pair<Int, Int>>, amplitud: Double = AMPLITUD) {
