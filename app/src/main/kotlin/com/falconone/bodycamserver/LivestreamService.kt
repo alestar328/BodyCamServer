@@ -330,6 +330,9 @@ object LivestreamService {
         val eng = engine ?: return false
         if (!sosPedido || isStreaming) return true
         return try {
+            // Antes de encender el vídeo, para que el primer fotograma de un SOS
+            // nocturno ya salga en grises. Registrarlo otra vez lo sustituye.
+            eng.registerVideoFrameObserver(MonocromoSos)
             eng.enableVideo()
             // Bodycam sensor is 90° — use rear camera and let Agora auto-detect orientation
             eng.setCameraCapturerConfiguration(

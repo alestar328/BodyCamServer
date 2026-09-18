@@ -229,7 +229,8 @@ class BtServerService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "BtServerService onCreate")
-        HardwareController.irOff()  // reset IR state on service start
+        // Arranca en modo día (IR apagado, filtro puesto) y a partir de ahí decide la luz.
+        ModoNoche.arrancar()
         LedSignals.refresh()  // pinta por estado real — evita pisar el azul de buffer o dejar colores pegados del firmware
         FileServerService.start()
         acquireWakeLock()
@@ -270,7 +271,7 @@ class BtServerService : Service() {
 
     override fun onDestroy() {
         isRunning = false
-        HardwareController.irOff()
+        ModoNoche.parar()
         HardwareController.ledOff()
         LivestreamService.salirDelCanal()
         PreviewController.stop()

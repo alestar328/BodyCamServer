@@ -11,6 +11,7 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
 import android.media.MediaRecorder
 import android.media.MediaScannerConnection
 import android.os.Bundle
@@ -192,6 +193,14 @@ class RecordingActivity : ComponentActivity() {
     private var mediaRecorder: MediaRecorder? = null
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
+
+    /**
+     * La petición repetida, guardada para poder relanzarla cambiando solo el efecto
+     * cuando [ModoNoche] pasa de día a noche o al revés. Rehacer la sesión cortaría
+     * el segmento en curso del anillo; cambiar la petición no.
+     */
+    @Volatile private var peticion: CaptureRequest.Builder? = null
+    private var admiteMonocromo = false
 
     private val cameraThread = HandlerThread("FalconCamThread").also { it.start() }
     private val cameraHandler = Handler(cameraThread.looper)
@@ -558,6 +567,9 @@ class RecordingActivity : ComponentActivity() {
             sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             applyPreviewTransform(sensorOrientation)
             val profile = RecordingProfile.choose(characteristics)
+            admiteMonocromo = characteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_EFFECTS)
+                ?.contains(CaptureRequest.CONTROL_EFFECT_MODE_MONO) == true
+            if (!admiteMonocromo) Log.w(TAG, "la cámara no ofrece efecto monocromo: el modo noche grabará en color")
 
             // Restos de una sesión anterior no tienen continuidad temporal con
             // esta: presentarlos como pre-roll juntaría dos momentos distintos.
@@ -586,8 +598,13 @@ class RecordingActivity : ComponentActivity() {
                                         val req = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                                             addTarget(previewSurface)
                                             addTarget(recorderSurface)
-                                        }.build()
-                                        session.setRepeatingRequest(req, null, cameraHandler)
+                                        }
+                                        // La cámara puede abrirse ya de noche: la primera
+                                        // petición sale con el efecto que toca.
+                                        ponerEfecto(req, ModoNoche.esDeNoche)
+                                        peticion = req
+                                        session.setRepeatingRequest(req.build(), null, cameraHandler)
+                                        ModoNoche.alCambiar = { deNoche -> cameraHandler.post { cambiarEfecto(deNoche) } }
                                         recorder.start()
                                         mediaRecorder = recorder
                                         enterArmed()
@@ -618,6 +635,30 @@ class RecordingActivity : ComponentActivity() {
 
         } catch (e: Exception) {
             fail("openCamera: ${e.message}")
+        }
+    }
+
+    /**
+     * Blanco y negro en modo noche. Con el filtro IR-CUT fuera el sensor recibe
+     * infrarrojo y, en color, todo sale magenta (medido el 2026-09-18 sobre el vídeo
+     * de la prueba); en monocromo es la imagen nocturna normal de una cámara con IR.
+     */
+    private fun ponerEfecto(req: CaptureRequest.Builder, deNoche: Boolean) {
+        if (!admiteMonocromo) return
+        val efecto = if (deNoche) CaptureRequest.CONTROL_EFFECT_MODE_MONO else CaptureRequest.CONTROL_EFFECT_MODE_OFF
+        req.set(CaptureRequest.CONTROL_EFFECT_MODE, efecto)
+    }
+
+    /** Corre en el hilo de la cámara. Sin sesión abierta no hay nada que cambiar. */
+    private fun cambiarEfecto(deNoche: Boolean) {
+        val req = peticion ?: return
+        val sesion = captureSession ?: return
+        ponerEfecto(req, deNoche)
+        try {
+            sesion.setRepeatingRequest(req.build(), null, cameraHandler)
+            Log.i(TAG, "efecto de cámara: ${if (deNoche) "monocromo (noche)" else "color (día)"}")
+        } catch (e: Exception) {
+            Log.w(TAG, "no se pudo cambiar el efecto de la cámara: ${e.message}")
         }
     }
 
@@ -832,6 +873,8 @@ class RecordingActivity : ComponentActivity() {
         mainHandler.removeCallbacks(monitorTick)
         mainHandler.removeCallbacks(elapsedTick)
         monitorJpeg = null
+        ModoNoche.alCambiar = null
+        peticion = null
         try { captureSession?.stopRepeating() } catch (_: Exception) {}
         try { captureSession?.close() } catch (_: Exception) {}
         captureSession = null

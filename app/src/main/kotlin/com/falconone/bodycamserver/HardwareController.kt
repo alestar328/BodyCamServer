@@ -53,10 +53,14 @@ object HardwareController {
     fun readLux(): Int = try { LIGHT_VALUE.readText().trim().toInt() } catch (_: Exception) { -1 }
 
     // ── Motor IR-CUT (filtro día/noche) ───────────────────────────────────────
+    // Sentido medido con la cámara el 2026-09-18, sacando un fotograma del visor con
+    // cada valor: "0" da colores normales y "1" la imagen magenta de un sensor sin
+    // filtro. Hasta entonces los comentarios decían lo contrario (1 = día), sin que
+    // nada lo usara todavía.
     private val MOTOR_NODE = File("/sys/class/misc/wiite_con_ctrl/motor_enable")
 
-    fun motorForward() = writeNode(MOTOR_NODE, "1")  // modo día
-    fun motorReverse() = writeNode(MOTOR_NODE, "0")  // modo noche / IR
+    fun filtroIrPuesto()  = writeNode(MOTOR_NODE, "0")  // modo día
+    fun filtroIrQuitado() = writeNode(MOTOR_NODE, "1")  // modo noche, deja pasar el IR
 
     // ── GPS BeiDou ────────────────────────────────────────────────────────────
     private val GPS_NODE = File("/sys/class/misc/wiite_con_ctrl/beidou_enable")
