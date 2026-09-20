@@ -901,6 +901,10 @@ class RecordingActivity : ComponentActivity() {
 
     /** MainActivity repinta a partir de esto. */
     private fun notifyStateChanged() {
+        // Por aquí pasan todos los cambios de estado de captura, así que es el sitio
+        // donde los LEDs infrarrojos se enteran de que se ha parado de grabar. Sin
+        // esto tardaban hasta 20 s en apagarse, lo que dura el ciclo del modo noche.
+        ModoNoche.sincronizarIr()
         sendBroadcast(Intent(ACTION_STATE_CHANGED).setPackage(packageName))
     }
 
@@ -976,7 +980,9 @@ class RecordingActivity : ComponentActivity() {
             val w = textureView.width.takeIf { it > 0 } ?: return@post
             val h = textureView.height.takeIf { it > 0 } ?: return@post
             val matrix = Matrix()
-            // El sensor da 90° y el montaje físico añade otros 45°: 135° en preview.
+            // El sensor da 90° y el montaje físico añade otros 90°: 180° en preview.
+            // (El comentario decía 45°/135° y no cuadraba con el código; manda el
+            // código, que es lo que se ve derecho en la unidad.)
             matrix.postRotate(sensorDegrees + 90f, w / 2f, h / 2f)
             textureView.setTransform(matrix)
         }

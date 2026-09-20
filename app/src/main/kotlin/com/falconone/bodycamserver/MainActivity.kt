@@ -66,6 +66,11 @@ import androidx.compose.ui.unit.dp
  *  - **Un solo objetivo táctil.** La bodycam va sujeta al uniforme: se opera con
  *    las teclas físicas o desde el teléfono. El SOS se queda porque es lo único
  *    que puede hacer falta a ciegas.
+ *  - **La pantalla va girada.** El panel se dibuja dentro de `Rotated`, con el
+ *    mismo [OVERLAY_ROTATION_DEGREES] del overlay de grabación, y la activity va
+ *    fijada a `landscape` en el manifest igual que RecordingActivity: las dos
+ *    pantallas enseñan el mismo `ControlPanel` y tienen que leerse igual. Los
+ *    `@Preview` de abajo lo llaman sin girar, que es como se lee de verdad.
  *
  * RecordingActivity sigue en Views: lleva un TextureView atado a Camera2 y las
  * capas giradas del overlay, que no ganan nada pasando a Compose.
@@ -129,7 +134,13 @@ class MainActivity : ComponentActivity() {
         DeviceOwner.sujetarPantalla(this)
 
         setContent {
-            ControlPanel(state = panel, onSos = ::toggleLivestream)
+            // El panel de la unidad va montado girado. RecordingActivity lo compensa
+            // desde el principio en su overlay, y esta pantalla no: al abrir la app
+            // el panel salía tumbado hasta que la de grabación se ponía encima.
+            // Mismo giro y mismo [Rotated] que el overlay, para que no se separen.
+            Rotated(OVERLAY_ROTATION_DEGREES) {
+                ControlPanel(state = panel, onSos = ::toggleLivestream)
+            }
         }
 
         requestPermissions()

@@ -10,7 +10,7 @@ Registro único de horas y entregas para las **dos aplicaciones del proyecto**.
 **Inicio del proyecto:** 2026-04-23 (primer commit de BodyCamServer)
 **Último pago recibido:** 2026-07-24
 **Tarifa:** 20 €/h
-**Última actualización de este archivo:** 2026-09-08 18:10
+**Última actualización de este archivo:** 2026-09-21 21:00 (sesión del 20-sep y madrugada del 21, imputada al 21 por indicación del usuario)
 **Versión BodyCamServer:** `1.3` (versionCode 4) en código, firmada. La unidad corre el
 binario del cifrado y la subida por bloques, validado en hardware; el PTT del 08-sep está
 probado en la unidad pero **sin commitear**.
@@ -104,13 +104,16 @@ grabación. Compilado y desplegado en la unidad.
 | `BC-5` Cifrado y hash de la evidencia (implementación) | 2026-08-25 | ✅ En `develop` (`81f0995`), **validado en la unidad** | ~1060 añadidas · 6 archivos | 3.0 | 60 € |
 | `BC-6` Subida por bloques reanudable + servidor stub | 2026-08-26 | ⚠️ Sin commitear (`develop`), **validado en la unidad** | ~1521 añadidas · 11 archivos | 4.0 | 80 € |
 | `BC-8` PTT por Agora (botón físico F2) | 2026-09-08 | ⚠️ Sin commitear (`develop`), **validado en la unidad** | 5 archivos | 2.8 | 56 € |
-| **Subtotal app** | | **9 días de actividad** | **~8381 añadidas · 62 archivos** | **38.8** | **776 €** |
+| `BC-9` Infrarrojos que no se apagaban (al parar de grabar y al apagar la unidad) + giro de la pantalla de inicio | 2026-09-21 | ⚠️ Sin commitear (`dev_device_owner`), **apagado probado en la unidad**; el giro de pantalla, no | +337 añadidas / −41 · 8 `.kt` + manifest, 1 archivo nuevo (`ApagadoReceiver`) | 1.5 | 30 € |
+| **Subtotal app** | | **10 días de actividad** | **~8718 añadidas · 63 archivos** | **40.3** | **806 €** |
 
 > El reparto de horas de esta tabla es el del Excel de seguimiento, que es el registro
 > autoritativo. `BC-7` **no se usa aquí a propósito**: ese identificador está pedido por dos
 > trabajos distintos en las notas del proyecto (firma de release del 27-ago y emparejamiento
 > con la bodycam del 6-sep), así que el PTT abre `BC-8` en vez de añadir un tercer significado.
 > Conviene cerrar esa colisión antes de facturar por bloques.
+>
+> **Ojo con `BC-9`:** aquí es el arreglo de los infrarrojos y del giro de pantalla, porque es el siguiente número libre de este archivo. En el libro de facturación esa misma sesión va en **`BC-11`** (modo noche, entregado el 18-sep, que aquí no está registrado), y el `BC-9` de aquel libro significa otra cosa — vídeo original + proxy del 11-sep. Las dos numeraciones son independientes y **no** se deben cruzar.
 
 ---
 
@@ -267,7 +270,8 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 | 2026-09-08 | BC | BC-8 | 2.8 | **PTT por Agora en la bodycam.** Botón F2 medido por logcat: el broadcast solo llega al **soltar**, el firmware inyecta `KEYCODE_BACK` al segundo de mantenerlo y auto-repite con la Activity en foco — por eso es conmutador y no mantener-para-hablar. Una sola puerta en `BtServerService`, sesión **solo audio** que no toca la cámara ni dispara SOS, cesión del micrófono al anillo (conflicto de captura medido: warning 1033 / error 1165) y watchdog de captura para que nunca diga ON transmitiendo silencio. Contrato nuevo con el móvil: `BTN_PTT_ON`/`BTN_PTT_OFF` y campo `"ptt"` en `STATUS`. Validado en la unidad | _(sin commitear)_ | No | Marcas de fichero 12:33–16:39 · reparto por app estimado |
 | 2026-09-08 | AN | AN-4 | 1.5 | **Recepción del PTT en el teléfono:** excepción de escucha al uid 9001 (con `autoSubscribeAudio = false` la bodycam publicaba y no la oía nadie), estado por `onRemoteAudioStateChanged` tratando FROZEN como voz viva, y banda de aviso `PttAvisoOverlay` por encima de la navegación pero por debajo del SOS. Verificado con la W1 y el Redmi a la vez, sin SOS fantasma | _(sin commitear)_ | No | Marcas de fichero 12:33–16:53 · reparto por app estimado |
 | 2026-09-08 | AN | AN-4 | 0.5 | **PTT propio del teléfono:** botón mantener-para-hablar en Operations (descomentado y conectado), publicación del micrófono en caliente y anuncio `ptt_on`/`ptt_off` por el data stream — sin él la voz sale y no la oye nadie, porque el uid del teléfono es aleatorio y no se puede cablear como el 9001. Compila; **sin probar en aparatos**. `DEVLOG.md` y `docs/bodycam-contexto.md` actualizados | _(sin commitear)_ | No | Marcas de fichero 17:40–18:10 |
-|  |  | **TOTAL** | **54.8** |  |  |  | **1096 €** |
+| 2026-09-21 | BC | BC-9 | 1.5 | **Infrarrojos que no se apagaban y pantalla girada al abrir la app** (los dos, observados por el usuario en la unidad). Los LEDs IR estaban atados al **anillo armado** y no a la grabación: como abrir la app arma el anillo para toda la guardia, a oscuras se quedaban encendidos para siempre. Ahora solo alumbran grabando o emitiendo, con una entrada única (`ModoNoche.sincronizarIr`) colgada de los cambios de estado de captura y de emisión, para que se apaguen en la misma parada y no hasta 20 s después. Arregladas además dos formas de dejarlos encendidos en sysfs sin nadie que los bajara: el `irOn` de un ciclo a medias pisando al `irOff` del cierre del servicio, y el parpadeo de medir, que ahora solo se paga con los LEDs dando luz. El giro de −90° de la unidad lo aplicaba solo el overlay de `RecordingActivity`; `MainActivity` dibujaba el mismo `ControlPanel` sin girar, así que el panel salía tumbado al abrir la app: `Rotated` pasa a compartirse y `MainActivity` se fija a `landscape`. **En la sesión de la noche, el mismo fallo por una tercera vía:** apagar la unidad grabando dejaba los infrarrojos encendidos, porque lo escrito en sysfs lo mantiene el kernel y sobrevive al proceso, y el apagado no pasa por ningún `onDestroy`. `ApagadoReceiver` (nuevo) escucha `ACTION_SHUTDOWN` y `ACTION_REBOOT` —registrado en código, que con `targetSdk 28` un receiver de apagado declarado en el manifest no recibe nada— y apaga infrarrojo, LED, linterna, sensor y filtro en una sola llamada al shell; segundo veto en `LedSignals` para que el `refresh()` de un cambio de estado no vuelva a encender el LED por detrás, y `BootReceiver` como red del corte seco de batería. Coste del apagado 4113 → 2069 ms, de los que 2070 son el motor del filtro IR-CUT, así que el filtro va el último y las luces caen en el primer décimo de segundo. **Apagado probado en la unidad** (IR encendido 1441 lux → 0) y confirmado por el usuario apagando con el botón; el giro de pantalla sigue sin comprobar | _(sin commitear)_ | No | Indicado por el usuario: 1,5 h · sesión del 20-sep y madrugada del 21, imputada al 21 a las 21:00 |
+|  |  | **TOTAL** | **56.3** |  |  |  | **1126 €** |
 
 
 > ### ⚠️ Días de septiembre SIN REGISTRAR — no facturar desde este archivo sin cerrarlos
@@ -284,7 +288,17 @@ git log --since="2026-08-09" --date=short --pretty=format:"%ad %h %s"
 >
 > Son **~10,4 h medidas más el 7-sep y la confirmación del 3-sep**. Están descritas en el
 > `DEVLOG.md` de AeriaNexusPrototype y en la memoria `horas-septiembre-2026`, pero no
-> imputadas. Hasta cerrarlas, el total de **54,8 h** de arriba es un **suelo**, no la cifra real.
+> imputadas aquí.
+>
+> **Y falta mucho más (revisado el 2026-09-20).** Este archivo se quedó parado el 8-sep.
+> Del **9 al 20 de septiembre** hay trabajo anotado en el libro de facturación
+> (`tabla_horas_facturacion_proyecto.xlsx`, en el repo del móvil) que **no está en esta
+> tabla**: **10,2 h de BC**, **29,3 h de AN** y **13,5 h de una tercera aplicación, `NX`**
+> (`aeria-nexus`, el backend), que este archivo ni siquiera contempla. El libro suma
+> **125,5 h**; esta tabla, 56,3.
+>
+> **La cifra buena es la del libro, no la de aquí.** Mientras no se vuelquen esos días,
+> los totales de este archivo son un **suelo** y **no se factura desde él**.
 |  |  |  |  |  |  |  |  |
 
 ---
@@ -435,38 +449,40 @@ Las horas se llevan **separadas por aplicación** y el total del proyecto es su 
 
 | Aplicación | Horas | Importe | Nota |
 |---|---|---|---|
-| BodyCamServer | **38.8** | **776 €** | 09 y 14-ago reconstruidos, 27-ago estimado; el resto registrado — ver §0.A |
+| BodyCamServer | **40.3** | **806 €** | 09 y 14-ago reconstruidos, 27-ago estimado; el resto registrado — ver §0.A |
 | AeriaNexusPrototype | **16.0** | **320 €** | Del 25-ago al 30-ago y el 08-sep — ver §0.B |
-| **TOTAL** | **54.8** | **1096 €** | Pendiente de facturar · **suelo**: faltan el 3, 4, 6 y 7 de septiembre |
+| **TOTAL** | **56.3** | **1126 €** | Pendiente de facturar · **suelo**: faltan el 3, 4, 6 y 7 de septiembre y todo el 9–20 de septiembre (ver el aviso de §3) |
 
 ### Desde la última entrega (2026-08-09)
 
 | Aplicación | Horas | Importe | Nota |
 |---|---|---|---|
-| BodyCamServer | **32.8** | **656 €** | 14, 15, 16, 23, 25, 26 y 27-ago y 08-sep (el 09-ago está dentro de la entrega `d4a4709`) |
+| BodyCamServer | **34.3** | **686 €** | 14, 15, 16, 23, 25, 26 y 27-ago, 08-sep y 21-sep (el 09-ago está dentro de la entrega `d4a4709`) |
 | AeriaNexusPrototype | **16.0** | **320 €** | 25, 26, 27, 29 y 30-ago y 08-sep |
-| **TOTAL** | **48.8** | **976 €** | |
+| **TOTAL** | **50.3** | **1006 €** | |
 
 ### Acumulado del proyecto
 
 | Aplicación | Horas registradas | Importe | Horas reales |
 |---|---|---|---|
-| BodyCamServer | **38.8** | **776 €** | _mayor — el histórico previo al 09-ago no se registró, ver §7_ |
+| BodyCamServer | **40.3** | **806 €** | _mayor — el histórico previo al 09-ago no se registró, ver §7_ |
 | AeriaNexusPrototype | **16.0** | **320 €** | _mayor — ver §7_ |
-| **TOTAL PROYECTO** | **54.8** | **1096 €** | _mayor que lo registrado_ |
+| **TOTAL PROYECTO** | **56.3** | **1126 €** | _mayor que lo registrado — el libro de facturación va por 125,5 h_ |
 
 ### Objetivo de facturación — cierre de septiembre 2026
 
 | Concepto | Horas | Importe |
 |---|---|---|
-| Registrado a 2026-09-08 | 54.8 | 1096 € |
+| Registrado en **este archivo** a 2026-09-21 | 56.3 | 1126 € |
+| Registrado en el **libro de facturación** a 2026-09-21 | **125.5** | **2510 €** |
 | Objetivo mínimo | 100.0 | **2000 €** |
-| **Pendiente de generar** | **45.2** | **904 €** |
+| **Pendiente de generar** | **0** | **0 €** — superado |
 
-Con 30 h/semana comprometidas, las **45,2 h** restantes se cubren en **~1,5 semanas**: el
-umbral de los 2000 € se cruza alrededor del **viernes 18 de septiembre de 2026**. Y esa fecha
-es **conservadora**: las horas del 3, 4, 6 y 7 de septiembre (~10,4 h medidas más dos días sin
-medir) todavía no están imputadas, así que en cuanto se cierren el umbral se adelanta.
+**El objetivo ya está cubierto** según el libro de facturación: 125,0 h = 2500 €, con el
+umbral de las 100 h cruzado el **16 de septiembre**. La previsión anterior (cruzarlo el
+18-sep) se quedó corta porque no contaba ni los días de septiembre sin imputar ni la
+aparición del backend `NX` como tercera aplicación. Las 56,3 h de este archivo **no**
+sirven para facturar: ver el aviso de §3.
 
 ---
 

@@ -354,6 +354,9 @@ object LivestreamService {
             // significar "en buffer" (ver enterArmed) y no pueden compartir
             // color: emitir es precisamente cuando NO hay anillo.
             HardwareController.ledYellowBlink()
+            // Un SOS nocturno también necesita los infrarrojos, aunque aquí no se esté
+            // grabando: la imagen que hay que ver es la que sale al teléfono.
+            ModoNoche.sincronizarIr()
             // Mientras emite, la unidad no graba: que lo grabe el backend.
             SosNotifier.inicio(context)
             true
@@ -564,6 +567,7 @@ object LivestreamService {
         if (micAbierto) PttTones.cerrar()
         SosNotifier.fin()
         LedSignals.refresh()
+        ModoNoche.sincronizarIr()
         Log.d(TAG, "Livestream stopped (sigue escuchando: $enCanal)")
 
         // Devolver la cámara al anillo si el agente tenía el servicio activo.

@@ -10,6 +10,181 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-21 (madrugada) — Apagar la unidad apaga también las luces
+
+### Por qué
+
+El usuario apagó la bodycam **mientras grababa** y los infrarrojos se quedaron
+encendidos, alumbrando con la unidad apagada. La entrada de más abajo, de esa misma
+tarde, arregló el caso de *parar la grabación*; este es otro: al apagar no pasa por
+`BtServerService.onDestroy` ni por `ModoNoche.parar()`, y **lo escrito en sysfs no es
+estado del proceso** — lo mantiene el kernel y sobrevive a la app. Aquella entrada daba
+el caso por no arreglable desde dentro; lo es para el apagado ordenado, que es
+justamente el que se hace en mano desde el menú de encendido.
+
+### Hecho
+
+`ApagadoReceiver` nuevo, registrado **en código** por `BtServerService` (con
+`targetSdk 28`, un receiver de `ACTION_SHUTDOWN` declarado en el manifest no recibe
+nada: es un broadcast implícito fuera de la lista de excepciones de Android 8). Escucha
+`ACTION_SHUTDOWN` y `ACTION_REBOOT`, y su `apagarTodasLasLuces()` es ahora el único
+apagado de la app: lo usan también `BtServerService.onDestroy` y, como red de seguridad
+del corte seco, `BootReceiver`.
+
+- **Dos vetos antes de tocar nada.** El de `ModoNoche` ya existía. El nuevo es
+  `LedSignals.apagando`: `refresh()` corre en **cada** cambio de estado de captura, y al
+  apagar la unidad el sistema para las activities — sin el veto, ese `refresh()` volvía
+  a poner el LED verde justo después de haberlo bajado. Lo quita `onCreate` del
+  servicio, que es quien vuelve a pintar al arrancar.
+- **`HardwareController.apagarTodo()`**: infrarrojo, LED, sensor de luz y filtro, en una
+  sola llamada al shell (`writeNodes`). `ModoNoche.parar(apagarNodos = false)` cede la
+  escritura para no repetirla.
+
+### Medido en la unidad (YIMAO W1, 2026-09-21)
+
+| | |
+|---|---|
+| Ensayo completo | IR encendido = **1441 lux**, tras el apagado = **0** |
+| Coste total | 4113 ms → **2069 ms** |
+| Infrarrojo / LED / sensor | 27 / 44 / 29 ms |
+| **Motor del filtro IR-CUT** | **2070 ms** — la escritura espera a que la pieza acabe de moverse |
+
+El filtro va **el último** de la lista por eso: las luces están apagadas en el primer
+décimo de segundo aunque el sistema corte el apagado por la mitad, y el filtro no
+alumbra (y `ModoNoche.arrancar()` lo vuelve a poner en cada encendido). Los tres
+tiempos se registran en logcat en cada apagado: son el presupuesto, y el sistema da
+~10 s para **todos** los receptores, no para el nuestro.
+
+### Decisiones que conviene no volver a discutir
+
+- **El ensayo `APAGAR_LUCES` no es un capricho.** `ACTION_SHUTDOWN` es un broadcast
+  protegido: `adb shell` (uid 2000) se lleva un `SecurityException`, la unidad es build
+  `user` sin root y `svc power reboot` no hace nada. Sin la acción de depuración, la
+  única forma de probar el apagado es apagar de verdad y perder el cable. Va bajo
+  `BuildConfig.DEBUG`, como la sonda de batería del PTT.
+- **Para comprobarlo hay que reactivar el sensor de luz.** El apagado lo para, y con el
+  sensor parado el nodo `lux` devuelve un valor rancio que cae 180 por lectura (1441,
+  1261, 1081…) y parece un infrarrojo apagándose despacio. Costó un rato; está escrito
+  en el KDoc de `ENSAYO_APAGADO`.
+- **La escritura directa al nodo no cuela** desde la app: siempre cae al `sh -c`. Por
+  eso agrupar las escrituras importa, aunque el grueso resultara ser el motor.
+- **Sigue sin cubrirse el corte seco** (batería fuera, `force-stop`, crash): no hay
+  broadcast que escuchar. Lo tapa `BootReceiver` en el siguiente encendido.
+
+### Estado: PROBADO EN LA UNIDAD, INCLUIDO EL APAGADO REAL
+
+Ensayo de apagado con la unidad grabando y los infrarrojos puestos: se apagan (1441 → 0
+lux) y no vuelven a encenderse cuando después cambia el estado de captura. **Y el usuario
+lo confirmó apagando la bodycam con el botón: se apagó del todo, sin luces.**
+`assembleDebug` limpio e instalado en la unidad.
+
+### Próximo paso
+
+1. El menú de apagado sale girado 90°, como toda la pantalla del sistema: lo dibuja
+   SystemUI y la app no lo puede rotar. Decidir si se quita `GLOBAL_ACTIONS` de las
+   funciones del anclaje (ver `DeviceOwner.aplicarPoliticas`) y se apaga de otra forma,
+   o se deja tumbado.
+2. Apagar grabando deja el incidente sin cerrar. No se ha tocado: sellar el vídeo no
+   cabe en los ~10 s del apagado. Si importa, es trabajo aparte.
+3. Sigue sin comprobarse el giro del panel de `MainActivity`, que es de la sesión de la
+   tarde.
+
+---
+
+## 2026-09-21 — Los infrarrojos no se apagaban, y la pantalla de inicio salía girada
+
+### Por qué
+
+Dos cosas vistas en la unidad por el usuario: una a oscuras, la otra al abrir la app.
+
+**Las linternas IR.** Se encendían bien al grabar de noche, pero al parar seguían puestas.
+No era un fallo de escritura del nodo: el modo noche ataba los LEDs a `camaraEnUso()`, que
+es `isHoldingCamera || isStreaming`, y `isHoldingCamera` vale `state != IDLE` — es decir,
+**el anillo armado cuenta como cámara en uso**. Parar una grabación vuelve a `ARMED`, no a
+`IDLE`, y abrir la app arma el anillo para toda la guardia (`MainActivity.startService`).
+A oscuras eso significa los LEDs encendidos desde que anochece hasta que alguien cierre la
+app.
+
+**La pantalla girada.** El panel de la unidad va montado girado, y el giro de −90° lo
+aplicaba **solo** el overlay de `RecordingActivity`. `MainActivity` dibujaba el mismo
+`ControlPanel` sin girar, así que al abrir la app el panel salía tumbado hasta que `arm()`
+ponía la pantalla de grabación encima y tapaba el problema.
+
+### Hecho
+
+**Infrarrojos** — separado *medir* de *iluminar* en `ModoNoche.kt`:
+
+```kotlin
+/** Hay imagen que mejorar: anillo armado, grabando o emitiendo. */
+private fun camaraEnUso(): Boolean =
+    RecordingActivity.isHoldingCamera || LivestreamService.isStreaming
+
+/** Hay imagen que iluminar: la que va a evidencia o al teléfono. */
+private fun irHaceFalta(): Boolean =
+    esDeNoche && (RecordingActivity.isRecording || LivestreamService.isStreaming)
+```
+
+- Todas las escrituras del nodo pasan por `aplicarIr()`, idempotente y sin orden, igual que
+  `LedSignals.refresh()` con el LED de color. **Escribe siempre**, aunque crea que no cambia
+  nada: el nodo es de solo escritura y lo tocan también los comandos `IR_ON`/`IR_OFF` que
+  llegan del teléfono, así que lo que vale de verdad no se puede dar por sabido.
+- `sincronizarIr()` es la entrada pública. Cuelga de `RecordingActivity.notifyStateChanged()`
+  —por donde pasan **todos** los cambios de estado de captura— y de las dos transiciones de
+  emisión de `LivestreamService`. Antes el apagado esperaba al siguiente ciclo del modo
+  noche: hasta 20 s con las linternas puestas.
+- `parar()` pone `parando = true` **lo primero de todo**. Antes no interrumpía al hilo, así
+  que el `irOn` de un ciclo a medio correr pisaba al `irOff` del cierre del servicio y los
+  LEDs se quedaban encendidos con el objeto ya parado y nadie que los bajara.
+- El parpadeo de 800 ms para medir y el intervalo largo de 20 s solo se pagan si los LEDs
+  están dando luz (`irEncendido`). Con el anillo armado y los LEDs apagados la lectura ya
+  sale limpia, se mide cada 3 s, y al pulsar grabar el modo noche ya está decidido: el IR
+  entra al instante en vez de tardar ~12 s en detectar la noche desde cero.
+
+**Pantalla** — `Rotated` pasa de `private` a `internal` en `RecordingOverlay.kt`,
+`MainActivity` envuelve su `setContent` con `Rotated(OVERLAY_ROTATION_DEGREES)` y queda
+fijada a `landscape` en el manifest, como `RecordingActivity`.
+
+### Decisiones que conviene no volver a discutir
+
+- **Los LEDs siguen a la grabación; el filtro IR-CUT sigue al modo noche entero.** Quitar y
+  poner el filtro mueve un motor, y hacerlo en cada arranque y parada de grabación sería un
+  clic-clac constante. **El precio, y hay que validarlo con el cliente: el pre-roll de 20 s
+  nocturno se graba con el filtro fuera pero SIN LEDs**, así que tiene menos luz que el resto
+  del incidente. Decisión del usuario el 20-sep: es prioritario que las linternas no se
+  queden encendidas.
+- **El `landscape` de MainActivity no es cosmético.** Si las dos activities no parten de la
+  misma orientación base, el mismo giro de −90° deja cada pantalla mirando a un lado. Con las
+  dos en `landscape`, MainActivity queda geométricamente idéntica a RecordingActivity, que es
+  la configuración que ya se lee bien en la unidad.
+- **El valor del IR vive en sysfs, no en el proceso.** Si la app muere sin pasar por
+  `onDestroy` (force-stop, kill por memoria, crash), los LEDs se quedan encendidos y solo los
+  baja `BootReceiver` o el siguiente `ModoNoche.arrancar()`. Eso no tiene arreglo desde
+  dentro de la app; es el motivo de que `arrancar()` empiece siempre poniendo modo día.
+- **El comentario de `applyPreviewTransform` mentía.** Decía «el montaje físico añade otros
+  45°: 135° en preview» y el código hace `+90f`. Manda el código: el preview se ve derecho en
+  la unidad. Comentario corregido, código intacto.
+
+### Estado: COMPILA Y GENERA APK, SIN PROBAR EN LA UNIDAD
+
+`assembleDebug` limpio. **No había bodycam accesible por adb** en toda la sesión, así que ni
+el apagado de las linternas ni el giro del panel se han visto funcionar.
+
+Sesión del 20-sep. La hora va imputada al **21-sep a las 22:00** por indicación del usuario,
+en `SEGUIMIENTO.md` (bloque `BC-9`) y en el libro de facturación (bloque `BC-11`, que es el
+del modo noche del 18-sep — las dos numeraciones son independientes).
+
+### Próximo paso
+
+1. En la unidad y a oscuras: `adb logcat -s FalconNoche`, grabar, parar, y comprobar que las
+   linternas se apagan en la misma parada y no 20 s después.
+2. Comprobar que el panel se lee derecho **desde el primer segundo** al abrir la app. Si sale
+   girado 180° en vez de derecho, es que la base de MainActivity ya era `landscape` y sobra
+   uno de los dos cambios.
+3. Decidir con el cliente si el pre-roll nocturno puede ir sin infrarrojos, o si hay que
+   volver a encenderlos con el anillo armado asumiendo que duren toda la guardia.
+
+---
+
 ## 2026-09-20 — Cancelar la subida de un incidente desde el teléfono
 
 ### Por qué

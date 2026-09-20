@@ -226,11 +226,20 @@ class BtServerService : Service() {
         }
     }
 
+    /**
+     * Apagar la unidad tiene que dejarla a oscuras. Se registra aquí, y no en el
+     * manifest, porque ACTION_SHUTDOWN es un broadcast implícito no exceptuado en
+     * Android 8: con targetSdk 28 un receiver del manifest no lo recibiría. Este
+     * servicio es el que está vivo siempre, así que es el sitio.
+     */
+    private val apagadoReceiver = ApagadoReceiver()
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "BtServerService onCreate")
         // Arranca en modo día (IR apagado, filtro puesto) y a partir de ahí decide la luz.
         ModoNoche.arrancar()
+        LedSignals.apagando = false   // se levanta al apagar la unidad; aquí ya no toca
         LedSignals.refresh()  // pinta por estado real — evita pisar el azul de buffer o dejar colores pegados del firmware
         FileServerService.start()
         acquireWakeLock()
@@ -243,6 +252,7 @@ class BtServerService : Service() {
             send(Rsp.error(motivo))
             send(Ntf.PTT_OFF)
         }
+        registerReceiver(apagadoReceiver, ApagadoReceiver.filtro())
         registerReceiver(sideKeyReceiver, IntentFilter("android.intent.action.SIDE_KEY_INTENT"))
         registerReceiver(smokeKeyReceiver, IntentFilter().apply { smokeKeyActions.forEach { addAction(it) } })
         acquireWifiLock()
@@ -271,12 +281,14 @@ class BtServerService : Service() {
 
     override fun onDestroy() {
         isRunning = false
-        ModoNoche.parar()
-        HardwareController.ledOff()
+        // Mismo apagado que el del botón de encendido: para el modo noche con su
+        // veto, baja el IR, el LED y la linterna, y devuelve el filtro a modo día.
+        ApagadoReceiver.apagarTodasLasLuces("servicio parado")
         LivestreamService.salirDelCanal()
         PreviewController.stop()
         FileServerService.stop()
         connectivityHandler.removeCallbacks(connectivityChecker)
+        try { unregisterReceiver(apagadoReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(smokeKeyReceiver) } catch (_: Exception) {}
         // Desarmar del todo: disarm sella el incidente en curso si lo hay.

@@ -168,9 +168,12 @@ fun RecordingOverlay(
  * vez de traspuesta — se veían franjas sin cubrir a los lados del eje largo.
  * `requiredSize` ignora las constraints entrantes y deja que el hijo desborde,
  * que es justo lo que hace falta aquí.
+ *
+ * No es privada: [MainActivity] envuelve con ella su propio contenido. El giro de
+ * esta unidad es uno solo y tiene que aplicarse igual en las dos pantallas.
  */
 @Composable
-private fun Rotated(rotationDegrees: Float, content: @Composable BoxScope.() -> Unit) {
+internal fun Rotated(rotationDegrees: Float, content: @Composable BoxScope.() -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier

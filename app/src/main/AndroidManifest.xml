@@ -41,10 +41,15 @@
              CATEGORY_HOME: la app es el lanzador de la unidad cuando está en kiosco.
              Lo elige el device owner con addPersistentPreferredActivity, así que no
              sale el diálogo de "¿qué app usar?"; sin el rol, el filtro está pero no
-             gana a la pantalla de inicio del fabricante. -->
+             gana a la pantalla de inicio del fabricante.
+             screenOrientation: la misma que RecordingActivity. El panel de la unidad
+             va montado girado y se compensa en Compose (ver Rotated); si las dos
+             activities no parten de la misma orientación base, el mismo giro deja
+             cada pantalla mirando a un lado. -->
         <activity
             android:name=".MainActivity"
             android:theme="@style/Theme.FalconPanel"
+            android:screenOrientation="landscape"
             android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
