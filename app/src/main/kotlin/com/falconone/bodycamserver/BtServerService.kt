@@ -488,6 +488,36 @@ class BtServerService : Service() {
                 Rsp.ok("${Cmd.LED}:$v")
             }
 
+            // ── Subida de evidencia ───────────────────────────────────────────
+            // El teléfono es el único sitio con pantalla para enseñar la lista y
+            // decidir: en la unidad no cabe. Cancelar NO borra el vídeo, solo lo
+            // saca de la cola de reintentos (ver UploadCancel).
+
+            Cmd.UPLOAD_LIST -> Rsp.uploads(UploadCancel.resumen())
+
+            Cmd.UPLOAD_CANCEL -> {
+                val id = parts.getOrNull(1)
+                when {
+                    id.isNullOrBlank() -> Rsp.error("Falta el incidente: UPLOAD_CANCEL:INC_000032")
+                    UploadCancel.cancelar(id) -> Rsp.ok("${Cmd.UPLOAD_CANCEL}:$id")
+                    else -> Rsp.error("No se pudo cancelar $id")
+                }
+            }
+
+            Cmd.UPLOAD_RESUME -> {
+                val id = parts.getOrNull(1)
+                when {
+                    id.isNullOrBlank() -> Rsp.error("Falta el incidente: UPLOAD_RESUME:INC_000032")
+                    !UploadCancel.reanudar(id) -> Rsp.error("No se pudo reanudar $id")
+                    else -> {
+                        // Vuelve a la cola en el momento, sin esperar al siguiente
+                        // arranque: quien lo pide está mirando el teléfono ahora.
+                        UploadService.startIncident(applicationContext, id)
+                        Rsp.ok("${Cmd.UPLOAD_RESUME}:$id")
+                    }
+                }
+            }
+
             Cmd.GPS_ON  -> { HardwareController.gpsOn();  Rsp.ok(Cmd.GPS_ON)  }
             Cmd.GPS_OFF -> { HardwareController.gpsOff(); Rsp.ok(Cmd.GPS_OFF) }
 

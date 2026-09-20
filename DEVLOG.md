@@ -10,6 +10,179 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-20 — Cancelar la subida de un incidente desde el teléfono
+
+### Por qué
+
+Una unidad estaba subiendo `INC_000032` (la grabación de la prueba de modo noche del 18-sep) una y
+otra vez. No es un fallo: **la reanudación no se rinde nunca por diseño**. `resumePending()` se
+llama al abrir la app y al arrancar la unidad, y reencola todo incidente sin recibo con
+`delivered: true`; dentro de cada intento, `ChunkedUploader` aguanta 6 fallos con espera creciente
+hasta 30 s. Para una evidencia real en una furgoneta sin cobertura es justo lo que queremos. Para
+una prueba vieja o un destino mal configurado, es un bucle infinito que gasta batería y red.
+
+Faltaba la puerta de salida.
+
+### Hecho
+
+- **`UploadCancel` (nuevo):** la marca de cancelación es un fichero `upload.cancelled` **dentro del
+  directorio del incidente**, no una lista central: sobrevive a reinstalar la app y viaja con el
+  incidente si alguien lo copia.
+- **`ChunkedUploader.upload`** acepta `cancelado: () -> Boolean`. Se mira **entre bloques**, nunca
+  dentro de un PATCH —partirlo dejaría al servidor con un offset que no responde a nada—, y también
+  en rodajas de 500 ms durante la espera entre reintentos: de una tacada, cancelar durante el
+  backoff largo tardaba hasta 30 s en notarse y desde el teléfono parecía que el botón no hacía nada.
+- **`UploadService`:** `resumePending` salta los cancelados, `uploadIncidentChunked` sale de
+  inmediato si ya lo estaba (el intent puede llevar rato en la cola del IntentService) y el aviso
+  final distingue "cancelado" de "pendiente — se reanudará".
+- **Protocolo BT:** `UPLOAD_LIST`, `UPLOAD_CANCEL:<id>` y `UPLOAD_RESUME:<id>`, con respuesta
+  `UPLOADS:[{id,delivered,cancelled,pending}]`. `UPLOAD_RESUME` reencola en el momento, sin esperar
+  al siguiente arranque: quien lo pide está mirando el teléfono ahora.
+- **Atajo por adb** para desatascar una unidad en banco sin emparejar nada:
+  `--es upload_cancel INC_000032` / `--es upload_resume INC_000032` a `MainActivity`.
+
+### Lo que cancelar NO hace
+
+**No borra el vídeo.** Corta la transferencia y saca el incidente de la cola de reintentos; el MP4,
+el `.fev`, el manifiesto y la sesión de subida se quedan intactos. `UPLOAD_RESUME` lo devuelve a la
+cola sin repetir un solo byte, porque el servidor conserva los bloques que ya recibió
+(`UploadSessions`). Una bodycam en la que un botón hace desaparecer un vídeo no es defendible en
+cadena de custodia; descartar de verdad, si algún día hace falta, será otra operación con su rastro.
+
+### Pendiente
+
+- **Falta la parte del teléfono.** Los tres comandos no los manda nadie todavía: hay que añadir en
+  AeriaNexusPrototype la lista de subidas y los botones. Es un cambio del contrato entre las dos
+  apps — pasarle el agente de coherencia.
+- Sin probar en hardware (no había unidad conectada). Para confirmar el diagnóstico de INC_000032
+  con la unidad delante: `adb logcat -s FalconUpload FalconChunk`,
+  `adb shell cat /sdcard/FalconOne/incidents/INC_000032/upload.json` y `.../FalconOne/upload.conf`.
+
+### Próximo paso
+
+La lista de subidas en el móvil.
+
+---
+
+## 2026-09-20 — Modo kiosco: la app como device owner de la unidad (rama `dev_device_owner`)
+
+### Por qué
+
+El cliente pide "control total" de la bodycam, y sobre la mesa había tres caminos: kiosco con
+device owner, pedir un firmware a medida al fabricante, o una ROM propia sobre AOSP. Se descarta
+la ROM (haría falta el código del kernel y los componentes cerrados de Unisoc —cámara y módem—,
+más desbloquear el bootloader, y complica defender la cadena de custodia) y el firmware a medida
+queda como petición al fabricante, no como plan. **Device owner es lo único que podemos hacer
+nosotros, con coste conocido y reversible sin borrar nada.**
+
+### Hecho
+
+- **`DeviceOwner` (nuevo):** todas las políticas en un sitio. Anclaje de pantalla (lock task) solo
+  para nuestro paquete, barra de estado muerta, la app como lanzador
+  (`addPersistentPreferredActivity` con `CATEGORY_HOME`), apps del fabricante escondidas
+  (`com.wiite.camera`), y las restricciones de usuario: sin restablecimiento de fábrica, sin modo
+  seguro, sin cambiar la hora, sin usuarios nuevos, sin ventanas superpuestas.
+  Es idempotente y se llama en **cada arranque** de `MainActivity`: una unidad aprovisionada con
+  una versión vieja recoge las políticas nuevas al actualizar la app, sin volver al cable.
+- **`FalconDeviceAdmin` (nuevo):** el `DeviceAdminReceiver` al que apunta `dpm set-device-owner`.
+  Sin lógica; solo registra en el log cuándo se activa y cuándo se pierde el rol.
+- **`MainActivity`:** aplica políticas y ancla al crearse y al recuperar el foco; `singleTop` +
+  `onNewIntent` para recibir las órdenes de mantenimiento con la app ya abierta.
+- **`RecordingActivity`:** ancla también, junto a `goImmersive()`. Es la pantalla que el agente
+  tiene delante casi todo el tiempo.
+- **`tools/kiosco.sh` (nuevo):** aprovisionamiento y mantenimiento por adb —
+  `estado`, `poner`, `on`/`off`, `politicas`, `hora`, `reboot`, `soltar`.
+
+### Dos reglas que no se tocan
+
+1. **`DISALLOW_DEBUGGING_FEATURES` no se pone nunca**, y `aplicarPoliticas` hace lo contrario:
+   fuerza `ADB_ENABLED=1` por política y lo limpia si quedó puesto de una versión anterior.
+   Con kiosco y sin adb, una app que no arranque deja la unidad muerta y solo la revive un borrado
+   desde recovery. Por lo mismo se deja fuera `DISALLOW_INSTALL_APPS`: bloquearía `adb install`.
+2. **Siempre hay salida.** `renunciar()` quita el rol **sin borrar nada** (`clearDeviceOwnerApp`),
+   deshaciendo antes las restricciones y las apps escondidas, que si no se quedarían puestas sin
+   nadie que pueda levantarlas. Se llega por adb incluso con el kiosco puesto: el anclaje bloquea
+   las apps de terceros, no los intents a la nuestra.
+
+### De regalo
+
+- **Arranque automático.** Siendo el lanzador, la app abre sola al encender. Es lo que
+  `BOOT_COMPLETED` no consigue en esta unidad (el firmware lo manda a la cola de background,
+  verificado el 2026-08-26).
+- **La hora.** `DevicePolicyManager.setTime` existe desde API 28, justo la de la W1:
+  `tools/kiosco.sh hora` pone la del PC y quita las 6 h de desfase. Sin verificar si el firmware
+  la repone al reiniciar.
+- **El BACK del PTT.** Con la app anclada y siendo lanzador, el BACK que inyecta el firmware al
+  mantener F2 no tiene a dónde ir. Falta comprobar si además deja de llegar a `RecordingActivity`.
+- **La accesibilidad.** Ni un device owner puede encender un servicio de accesibilidad, así que
+  sigue siendo cosa del aprovisionamiento: `kiosco.sh poner` lo activa con
+  `settings put secure enabled_accessibility_services`, y las políticas dejan la lista de
+  permitidos con la nuestra y nada más. Antes había que activarlo a mano en Ajustes, que en
+  kiosco ya no se alcanza.
+
+### La APK del fabricante, destripada
+
+`MCP_NA20260109_276_ZXA_v286.apk` (146 MB), la que "reemplazó todo el interior del aparato".
+**No reemplaza nada: es una app de usuario normal.**
+
+- Paquete `com.smarteye.mcu`, `minSdk 21`, `targetSdk 29`.
+- **Firmada con una clave de depuración**: `CN=Android Debug, OU=besovideo`. No es la clave de
+  plataforma, así que no corre con permisos de sistema y los permisos privilegiados que pide
+  (`READ_PRIVILEGED_PHONE_STATE`, `WRITE_MEDIA_STORAGE`, `MOUNT_UNMOUNT_FILESYSTEMS`) no se le
+  conceden: Android los ignora en silencio.
+- Declara `CATEGORY_HOME` (`com.smarteye.mcu.SplashActivity`) — **es un lanzador**, como el nuestro.
+- Tiene receptor de administración (`com.smarteye.common.LockReceiver`), y en el dex solo aparecen
+  `ADD_DEVICE_ADMIN`, `isAdminActive` y `lockNow`: eso es **device admin** (diálogo de
+  consentimiento, sin cable), no device owner.
+- **No usa** `startLockTask`, `setLockTaskPackages`, `setApplicationHidden`,
+  `addPersistentPreferredActivity` ni `setStatusBarDisabled`. Comprobado sobre los tres dex.
+- No declara servicio de accesibilidad: coge las teclas estando en primer plano y por
+  `MEDIA_BUTTON`. Con la pantalla apagada no puede — nosotros sí.
+
+O sea: la sensación de que se adueñó de la unidad es ser el lanzador por defecto + arrancar con el
+sistema. El agente puede salirse, las apps del fabricante siguen ahí y el reset de fábrica no está
+bloqueado.
+
+### Decisión: el piloto va sin aprovisionamiento
+
+Para el test con usuarios reales se usa el **modo piloto**, que es justo el nivel del fabricante:
+la app como lanzador, sin device owner. Reversible, no toca cuentas y no puede dejar una unidad
+inútil. El kiosco completo queda para las unidades que se entreguen a un cliente.
+
+`tools/kiosco.sh piloto` hace la pasada por unidad —instalar, activar la accesibilidad, fijar el
+lanzador con `cmd package set-home-activity` y abrir la app— y **recorre todas las unidades
+conectadas**, para un despliegue con hub USB. `piloto-off` devuelve el lanzador del fabricante.
+
+Sigue haciendo falta enchufar cada unidad una vez, porque alguien tiene que instalar la APK; lo que
+desaparece es la ceremonia del rol, el requisito de no tener cuentas y el riesgo de dejarla tiesa.
+
+Lo que el piloto **no** tiene, y conviene recordar al leer sus resultados: no se puede impedir que
+el agente salga de la app, las apps del fabricante siguen compitiendo por la cámara, la hora sigue
+6 h adelantada (`setTime` exige el rol) y los permisos hay que concederlos a mano en la pantalla
+de 3 cm.
+
+### Pendiente
+
+- **Nada de esto se ha probado en la unidad: no había aparato conectado.** Compila y el APK sale.
+  Prueba del piloto: `kiosco.sh piloto` → reiniciar y ver que arranca en FalconOne → comprobar que
+  las teclas responden con la pantalla apagada (la accesibilidad quedó activada).
+- Prueba del kiosco, en **una sola unidad**: `kiosco.sh estado` → `poner` → comprobar que se ancla,
+  que el botón de inicio no saca de la app y que `adb` sigue vivo → reiniciar y ver que arranca
+  sola → `kiosco.sh soltar` y confirmar que la unidad vuelve a la normalidad sin perder nada.
+- El rol se rechaza si la unidad tiene **alguna cuenta configurada**; el script lo comprueba antes.
+- Las órdenes van como extras de un intent a `MainActivity`, que está exportada: hoy los podría
+  mandar cualquier app instalada. En kiosco no hay forma de instalar ni ejecutar otra app, pero no
+  es autorización de verdad. **TODO:** moverlos al canal Bluetooth con el teléfono emparejado, que
+  ya va autenticado con el certificado de la unidad.
+- Ampliar `APPS_DEL_FABRICANTE` mirando `pm list packages` en la unidad — con cuidado: esconder un
+  paquete de sistema equivocado deja la unidad sin llamadas.
+
+### Próximo paso
+
+Probar el modo piloto en una unidad y, si va, hacer la pasada del despliegue.
+
+---
+
 ## 2026-09-18 — Modo noche automático: infrarrojo, filtro IR-CUT y blanco y negro
 
 ### Por qué (petición del usuario)

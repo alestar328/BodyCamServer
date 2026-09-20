@@ -76,6 +76,10 @@ class UploadService : IntentService("FalconUploadService") {
             // que el original, así que si falló y el original no, se quedaría sin subir.
             val pending = EvidenceStore.incidentIds()
                 .filter { !isDelivered(it) || IncidentProxy.pending(it) != null }
+                // Los cancelados no vuelven a la cola: es justo lo que significa
+                // cancelar aquí, porque si no la reanudación los recogería en el
+                // siguiente arranque. Ver UploadCancel.
+                .filterNot { UploadCancel.cancelado(it) }
             if (pending.isEmpty()) return
             Log.d(TAG, "reanudando ${pending.size} incidente(s) sin entregar")
             pending.forEach { id ->
@@ -155,6 +159,14 @@ class UploadService : IntentService("FalconUploadService") {
      * y no se borra nada.
      */
     private fun uploadIncidentChunked(incidentId: String, lat: Double, lon: Double) {
+        // Una subida cancelada puede seguir encolada de antes: el teléfono la
+        // canceló mientras este intent esperaba su turno en la cola del
+        // IntentService.
+        if (UploadCancel.cancelado(incidentId)) {
+            Log.w(TAG, "$incidentId: cancelado — no se sube")
+            return
+        }
+        val cancelado = { UploadCancel.cancelado(incidentId) }
         val originalDelivered = isDelivered(incidentId)
         val proxy = IncidentProxy.pending(incidentId)
         if (originalDelivered && proxy == null) {
@@ -213,6 +225,7 @@ class UploadService : IntentService("FalconUploadService") {
                     "encrypted" to "false",
                     "crypto_format" to "none",
                 ),
+                cancelado = cancelado,
             )
             if (!outcome.delivered) Log.w(TAG, "$incidentId: manifest no subido (${outcome.error})")
         }
@@ -234,6 +247,7 @@ class UploadService : IntentService("FalconUploadService") {
                 "sha256_cipher" to payload.fingerprint,
                 "sha256_plain" to (payload.plainSha256 ?: ""),
             ),
+            cancelado = cancelado,
         ) { sent, total ->
             notify("$incidentId — ${100 * sent / total}%")
         }
@@ -248,6 +262,10 @@ class UploadService : IntentService("FalconUploadService") {
             outcome.delivered -> {
                 Log.d(TAG, "$incidentId entregado (${outcome.bytesSent / 1024} KB enviados)")
                 notify("$incidentId subido")
+            }
+            cancelado() -> {
+                Log.w(TAG, "$incidentId: subida cancelada (${outcome.bytesSent / 1024} KB enviados)")
+                notify("$incidentId cancelado")
             }
             else -> {
                 Log.e(TAG, "$incidentId sin entregar: ${outcome.error}")
@@ -285,6 +303,7 @@ class UploadService : IntentService("FalconUploadService") {
                 "proxy_short_side" to minOf(info.optInt("width"), info.optInt("height")).toString(),
                 "proxy_fps" to info.optInt("fps").toString(),
             ),
+            cancelado = { UploadCancel.cancelado(incidentId) },
         )
         when {
             outcome.delivered && outcome.verified == false ->

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Políticas que declara el administrador de dispositivo.
+
+  Son las que el sistema exige declarar aquí para poder usarlas después; el resto
+  de lo que hace un device owner (anclaje, apps escondidas, ajustes globales) no
+  se declara. Lo que de verdad se aplica está en DeviceOwner.aplicarPoliticas().
+
+  wipe-data está declarado pero NO se usa en ningún sitio: borrar la unidad
+  borraría la evidencia que aún no se haya subido. Se deja porque el rol lo lleva
+  de serie y quitarlo no aporta nada.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <limit-password />
+        <watch-login />
+        <reset-password />
+        <force-lock />
+        <wipe-data />
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>

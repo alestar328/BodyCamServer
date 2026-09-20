@@ -472,6 +472,9 @@ class RecordingActivity : ComponentActivity() {
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
         goImmersive()
+        // Esta es la pantalla que el agente tiene delante casi todo el tiempo: el
+        // anclaje tiene que estar aquí, no solo en MainActivity.
+        DeviceOwner.sujetarPantalla(this)
 
         recordWhenReady = intent?.getBooleanExtra(EXTRA_RECORD_NOW, false) == true
 
@@ -528,7 +531,10 @@ class RecordingActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) goImmersive()
+        if (hasFocus) {
+            goImmersive()
+            DeviceOwner.sujetarPantalla(this)
+        }
     }
 
     override fun onDestroy() {

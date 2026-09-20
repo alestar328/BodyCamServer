@@ -99,6 +99,7 @@ object ChunkedUploader {
         file: File,
         fingerprint: String,
         metadata: Map<String, String>,
+        cancelado: () -> Boolean = { false },
         onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
     ): Outcome {
         if (!file.isFile) return Outcome(false, null, null, 0, "no existe ${file.name}")
@@ -117,6 +118,14 @@ object ChunkedUploader {
             if (url != null) " — reanudando sesión existente" else "")
 
         while (failures < MAX_CONSECUTIVE_FAILURES) {
+            // Se mira entre bloques y no dentro de uno: partir un PATCH a medias
+            // dejaría al servidor con un offset que no responde a nada. Lo que ya
+            // está subido se queda subido y la sesión sigue viva, así que reanudar
+            // después no repite ni un byte.
+            if (cancelado()) {
+                Log.w(TAG, "${file.name}: cancelado — se corta con $sent de $total bytes enviados")
+                return Outcome(false, null, url, sent, "cancelado")
+            }
             try {
                 if (url == null) {
                     url = create(total, metadata)
@@ -139,7 +148,7 @@ object ChunkedUploader {
                     url = null
                     offset = null
                     failures++
-                    sleep(failures)
+                    sleep(failures, cancelado)
                     continue
                 }
 
@@ -170,7 +179,7 @@ object ChunkedUploader {
                 if (failures >= MAX_CONSECUTIVE_FAILURES) {
                     return Outcome(false, null, url, sent, e.message)
                 }
-                sleep(failures)
+                sleep(failures, cancelado)
             }
         }
         return Outcome(false, null, url, sent, "reintentos agotados")
@@ -318,10 +327,23 @@ object ChunkedUploader {
         conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(200).orEmpty()
     } catch (_: Exception) { "" }
 
-    private fun sleep(failures: Int) {
+    /**
+     * Espera entre reintentos, en rodajas y mirando la cancelación.
+     *
+     * De una tacada, una cancelación pedida durante la espera larga tardaba hasta
+     * 30 s en surtir efecto, y desde el teléfono eso se ve como que el botón no
+     * hace nada.
+     */
+    private fun sleep(failures: Int, cancelado: () -> Boolean = { false }) {
         val wait = BACKOFF_MILLIS[minOf(failures - 1, BACKOFF_MILLIS.lastIndex).coerceAtLeast(0)]
+        val rodaja = 500L
+        var restante = wait
         try {
-            Thread.sleep(wait)
+            while (restante > 0 && !cancelado()) {
+                val ahora = minOf(rodaja, restante)
+                Thread.sleep(ahora)
+                restante -= ahora
+            }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }

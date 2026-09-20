@@ -35,13 +35,26 @@
              HTTP sin cifrar (NanoHTTPD) en esa misma red.
              TODO: quitar esto cuando la subida apunte al endpoint HTTPS de Nexus. -->
 
+        <!-- singleTop: las órdenes de mantenimiento llegan por `am start` con extras
+             (ver DeviceOwner.atenderOrdenDeMantenimiento). Sin esto, con la app ya abierta
+             el intent no llega a onNewIntent y la orden se pierde.
+             CATEGORY_HOME: la app es el lanzador de la unidad cuando está en kiosco.
+             Lo elige el device owner con addPersistentPreferredActivity, así que no
+             sale el diálogo de "¿qué app usar?"; sin el rol, el filtro está pero no
+             gana a la pantalla de inicio del fabricante. -->
         <activity
             android:name=".MainActivity"
             android:theme="@style/Theme.FalconPanel"
+            android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 
@@ -73,8 +86,25 @@
             </intent-filter>
         </receiver>
 
+        <!-- Administración del dispositivo: es el componente al que apunta
+             `dpm set-device-owner` (ver tools/kiosco.sh). Sin él no hay kiosco. -->
+        <receiver
+            android:name=".FalconDeviceAdmin"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Captura de botones físicos (pantalla apagada / app en background) -->
-        <!-- Usuario debe activar una vez: Ajustes → Accesibilidad → FalconOne → Activar -->
+        <!-- Hay que activarlo una vez por unidad. Lo hace `tools/kiosco.sh poner`
+             con `settings put secure enabled_accessibility_services`: en kiosco ya
+             no se llega a Ajustes → Accesibilidad, y ni un device owner puede
+             encender un servicio de accesibilidad por su cuenta. -->
         <service
             android:name=".ButtonAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

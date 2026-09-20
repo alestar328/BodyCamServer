@@ -118,7 +118,15 @@ class MainActivity : ComponentActivity() {
 
         if (BuildConfig.DEBUG) atenderAltaDeIdentidadDebug(intent)
 
+        // Antes que nada: si la unidad está aprovisionada, esto la deja en kiosco.
+        // Va en cada arranque a propósito — así una unidad con políticas viejas las
+        // recoge al actualizar la app, sin volver a pasar por el cable.
+        DeviceOwner.aplicarPoliticas(this)
+        with(DeviceOwner) { atenderOrdenDeMantenimiento(intent) }
+        with(UploadCancel) { atenderOrdenDeSubida(intent) }
+
         goImmersive()
+        DeviceOwner.sujetarPantalla(this)
 
         setContent {
             ControlPanel(state = panel, onSos = ::toggleLivestream)
@@ -143,11 +151,26 @@ class MainActivity : ComponentActivity() {
         handler.post(uiRefresher)
     }
 
+    // Las órdenes de mantenimiento llegan aquí con la app ya abierta, que es el caso
+    // normal: la unidad arranca sola y no se cierra nunca.
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent == null) return
+        setIntent(intent)
+        if (BuildConfig.DEBUG) atenderAltaDeIdentidadDebug(intent)
+        with(DeviceOwner) { atenderOrdenDeMantenimiento(intent) }
+        with(UploadCancel) { atenderOrdenDeSubida(intent) }
+    }
+
     // Al recuperar el foco (vuelta de RecordingActivity, de un diálogo de permisos)
-    // el sistema restaura las barras: hay que volver a esconderlas.
+    // el sistema restaura las barras: hay que volver a esconderlas. El anclaje se
+    // reaplica por lo mismo — un diálogo del sistema puede haberlo soltado.
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) goImmersive()
+        if (hasFocus) {
+            goImmersive()
+            DeviceOwner.sujetarPantalla(this)
+        }
     }
 
     override fun onDestroy() {
