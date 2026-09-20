@@ -10,6 +10,72 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-18 — Modo noche automático: infrarrojo, filtro IR-CUT y blanco y negro
+
+### Por qué (petición del usuario)
+
+Le comentaron que la unidad "tenía grabación o sensor infrarrojo". Se miró por adb en la W1 y en
+las apps del fabricante: el hardware estaba entero y **sin usar**. LEDs IR (`…/2-0064/ocp_regs`),
+filtro IR-CUT motorizado (`wiite_con_ctrl/motor_enable`) y sensor de luz y proximidad ALPS
+(`input0/driver/lux`, ~175 lux en interior), todos con permisos `rw-rw-rw-`. `IR_ON`/`IR_OFF`
+existían por Bluetooth, pero el teléfono nunca los manda; el motor y el sensor no los llamaba
+nadie. `com.wiite.camera` solo tiene una "escena nocturna" por software.
+
+### Hecho
+
+- **`ModoNoche` (nuevo):**
+  - Hilo propio; lo arranca y lo para `BtServerService` (sustituye al `irOff()` suelto de antes).
+  - **Solo con la cámara en uso** (anillo armado, grabando o SOS). Con la cámara parada vuelve a
+    día y apaga el sensor, para no gastar batería con los IR en un cajón.
+  - Histéresis: noche con **<10 lux en 3 lecturas** (cada 3 s); día con **>40 lux en 2 medidas**.
+    Solo escribe en los cambios, así que no pisa un `IR_ON`/`IR_OFF` manual en cada lectura.
+  - **De noche mide con el IR apagado** 0,8 s cada 20 s (ver abajo).
+  - Avisa a la cámara con `alCambiar`.
+- **`HardwareController`: el motor estaba documentado al revés.** Medido con fotogramas del visor
+  (`/preview`): **`0` = filtro puesto (día)** y **`1` = filtro quitado** (imagen magenta en color).
+  Renombrado a `filtroIrPuesto()` / `filtroIrQuitado()`, en vez de `motorForward`/`motorReverse`.
+- **`RecordingActivity`:** guarda la petición de captura y la relanza con
+  `CONTROL_EFFECT_MODE_MONO` de noche y `OFF` de día, sin rehacer la sesión (no corta el segmento
+  del anillo). La W1 ofrece el efecto (`availableEffects [0 1 2 3 4 8]`); si otra cámara no lo
+  ofreciera, se avisa en el log y se graba en color.
+- **`MonocromoSos` (nuevo) + `LivestreamService`:** en el SOS la cámara la abre Agora, y la 4.3.0 no
+  trae filtro por LUT. Un `IVideoFrameObserver` en lectura-escritura, I420, `POST_CAPTURER`, pone
+  los planos U y V a 128 cuando es de noche. Se registra en `ponerSosEnElAire`, antes de `enableVideo`.
+
+### El sensor ve el infrarrojo de sus propios LEDs
+
+En la segunda prueba, a oscuras, el modo entraba y salía cada 11 s: **con el IR encendido el
+sensor marca ~470 lux en plena oscuridad**, más que una habitación iluminada (175-257). Ningún
+umbral lo separa. Midiendo apagado y encendido cada 50 ms, **el sensor promedia ~0,7 s** (de 463
+a 0 en ~0,67 s). Por eso, de noche, cada 20 s se apaga el IR 0,8 s, se lee y se vuelve a encender.
+El precio es un parpadeo oscuro breve cada 20 s en el vídeo nocturno y 20-40 s para volver a día.
+
+### Verificado en la unidad
+
+- Prueba 1 (sensor tapado con la mano): dos ciclos noche-día en el log y en el vídeo
+  (`INC_000030`). Salía magenta: de ahí el monocromo.
+- Prueba 2 (habitación a oscuras, `INC_000032`, 132 s): **blanco y negro con IR** durante toda la
+  oscuridad y estable, sin bucle; parpadeos de medida cada ~20 s; vuelta a color ~39 s después de
+  encender la luz.
+
+### Pendiente
+
+- **Probar el SOS en monocromo** (`MonocromoSos` compila y está instalado, sin probar):
+  a oscuras y con la cámara armada, esperar el clic del filtro; pulsar SOS (F3); en el teléfono,
+  el directo debe verse en blanco y negro; encender la luz y esperar ~45 s (vuelve a color);
+  cortar el SOS y buscar en el log `no se pudo pasar el SOS a monocromo`.
+- Tras cada medida hay ~1 s de imagen quemada al volver el IR (la exposición se adaptó a la
+  oscuridad). Se podría suavizar con `AE_LOCK` durante la medida.
+- Al volver a día hay ~0,5 s negros (13 fotogramas): parece el movimiento físico del filtro.
+- Los umbrales (10 / 40 lux) son de partida; cada cambio deja sus lux en `adb logcat -s FalconNoche`.
+- El búfer de log de la W1 es de 256 KB y Agora lo llena en minutos: leerlo justo después de probar.
+
+### Próximo paso
+
+La prueba del SOS en monocromo.
+
+---
+
 ## 2026-09-15 — La unidad escucha el canal todo el tiempo (punto 1 del PTT hacia la bodycam)
 
 ### Por qué
