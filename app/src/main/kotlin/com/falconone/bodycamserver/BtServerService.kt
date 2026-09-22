@@ -16,6 +16,7 @@ import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import android.os.BatteryManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -234,12 +235,35 @@ class BtServerService : Service() {
      */
     private val apagadoReceiver = ApagadoReceiver()
 
+    /**
+     * Alimenta el nivel de batería de [LedSignals], que desde el 2026-09-22 también
+     * pinta el LED por carga (verde ≥80, azul 40-79, rojo por debajo).
+     *
+     * Va aquí, y no en un sondeo periódico, porque el sistema ya emite el cambio y
+     * este servicio es el único proceso vivo siempre. `LedSignals` no puede
+     * preguntarlo por su cuenta: es un `object` sin `Context`, y lo llaman sitios
+     * (receivers, `onDestroy`, el hilo de captura) que tampoco tienen uno a mano.
+     *
+     * `ACTION_BATTERY_CHANGED` llega mucho más a menudo de lo que cambia el
+     * porcentaje —también por temperatura o voltaje—; de que eso no se convierta en
+     * una escritura de sysfs por broadcast se encarga [LedSignals.actualizarBateria].
+     */
+    private val bateriaReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            LedSignals.actualizarBateria(porcentajeBateria(intent))
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "BtServerService onCreate")
         // Arranca en modo día (IR apagado, filtro puesto) y a partir de ahí decide la luz.
         ModoNoche.arrancar()
         LedSignals.apagando = false   // se levanta al apagar la unidad; aquí ya no toca
+        // `ACTION_BATTERY_CHANGED` es sticky: registrarse devuelve ya el último, así
+        // que el LED arranca con el color de carga en vez de con el de "desconocido".
+        LedSignals.actualizarBateria(porcentajeBateria(
+            registerReceiver(bateriaReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))))
         LedSignals.refresh()  // pinta por estado real — evita pisar el azul de buffer o dejar colores pegados del firmware
         FileServerService.start()
         acquireWakeLock()
@@ -289,6 +313,7 @@ class BtServerService : Service() {
         FileServerService.stop()
         connectivityHandler.removeCallbacks(connectivityChecker)
         try { unregisterReceiver(apagadoReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(bateriaReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(smokeKeyReceiver) } catch (_: Exception) {}
         // Desarmar del todo: disarm sella el incidente en curso si lo hay.
@@ -643,15 +668,22 @@ class BtServerService : Service() {
     }
 }
 
+/**
+ * Porcentaje 0-100 de un `ACTION_BATTERY_CHANGED`, o -1 si no se puede sacar.
+ *
+ * El nivel viene en la escala que diga el propio intent, que no tiene por qué ser
+ * 100. Lo comparten el LED y el STATUS del teléfono para que no puedan discrepar.
+ */
+private fun porcentajeBateria(intent: Intent?): Int {
+    val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+    return if (level >= 0 && scale > 0) level * 100 / scale else -1
+}
+
 // Lightweight helper for status queries (battery, storage) without holding camera
 class HardwareHelper {
-    fun batteryLevel(context: android.content.Context): Int {
-        val intent = context.registerReceiver(null,
-            android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-        val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = intent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
-        return if (level >= 0) (level * 100 / scale) else -1
-    }
+    fun batteryLevel(context: Context): Int = porcentajeBateria(
+        context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)))
 
     fun storageMb(): Long {
         val dir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "FalconOne")

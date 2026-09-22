@@ -397,8 +397,10 @@ private fun LinkRow(state: PanelState) {
 private fun IndicatorRow(state: PanelState) {
     // El punto REC tiene tres estados: rojo grabando, ámbar con el anillo armado
     // (grabación continua sin incidente), apagado en reposo.
-    // Azul armado = el mismo código de color que el LED físico (LedSignals):
-    // buffer activo, listos para grabar con pre-roll.
+    // Azul armado = buffer activo, listos para grabar con pre-roll. Ya **no** es el
+    // mismo código que el LED físico: desde que el LED indica también la carga
+    // (LedSignals), el azul de ahí fuera significa batería entre 40 y 79, y el
+    // armado solo se distingue aquí dentro y en el STATUS que lee el teléfono.
     val recColor = when {
         state.recording -> RED
         state.armed     -> BLUE

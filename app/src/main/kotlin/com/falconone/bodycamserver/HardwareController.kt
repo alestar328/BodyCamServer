@@ -10,9 +10,42 @@ import java.io.File
  * siguiera armado. Aquí el color sale del estado real de la unidad, así que da
  * igual quién llame ni en qué orden — el resultado es siempre el correcto.
  *
- * Prioridad: grabando > emitiendo > en buffer > reposo.
+ * **El LED es dos cosas a la vez** (decidido con el cliente el 2026-09-22): dice si
+ * la unidad está grabando y, cuando no lo está, cuánta batería le queda. No caben
+ * las dos señales en un solo LED, y la paleta del nodo sysfs no da para separarlas
+ * (hay rojo y amarillo parpadeando, pero **no hay verde ni azul parpadeando**), así
+ * que se reparten por prioridad:
+ *
+ * ```
+ * batería < 40  -> rojo            (parpadeando si además graba)
+ * grabando      -> rojo parpadeo
+ * emitiendo     -> amarillo parpadeo
+ * batería >= 80 -> verde
+ * batería >= 40 -> azul
+ * ```
+ *
+ * La batería baja es lo único que se impone al estado: una unidad que se va a
+ * quedar sin corriente a mitad de un incidente es peor noticia que no saber si
+ * está grabando, y el rojo sigue parpadeando mientras graba, así que la señal de
+ * grabación no se pierde del todo.
+ *
+ * **Lo que se pierde:** el azul fijo ya no significa "anillo armado". En cuanto se
+ * conoce el nivel de batería, reposo y armado se ven igual; la distinción sigue en
+ * el panel de la pantalla y en el STATUS que lee el teléfono. Mientras el nivel es
+ * desconocido ([nivelBateria] < 0, entre el arranque y el primer
+ * `ACTION_BATTERY_CHANGED`) se pinta con el código de estado de siempre.
  */
 object LedSignals {
+
+    /**
+     * Umbrales de batería en tanto por ciento, tal y como los pidió el cliente:
+     * de 80 para arriba verde, de 40 a 79 azul y por debajo de 40 rojo.
+     */
+    const val BATERIA_VERDE = 80
+    const val BATERIA_AZUL  = 40
+
+    /** Todavía no se ha escrito ningún color, o el último intento falló. */
+    private const val SIN_COLOR = -1
 
     /**
      * Apagado en curso: a partir de aquí el LED ya no se repinta.
@@ -24,19 +57,75 @@ object LedSignals {
      * bajado, y el valor vive en sysfs — se quedaría encendido con la unidad apagada.
      *
      * Lo levanta [ApagadoReceiver] y lo quita `BtServerService.onCreate`, que es
-     * quien vuelve a pintar el LED cuando la unidad arranca de nuevo.
+     * quien vuelve a pintar el LED cuando la unidad arranca de nuevo. Tocarlo olvida
+     * el color cacheado: [apagarTodo] baja el nodo por detrás de [refresh], y sin
+     * olvidarlo el primer `refresh()` del arranque creería que ya está pintado.
      */
     @Volatile var apagando = false
+        set(value) {
+            field = value
+            ultimoColor = SIN_COLOR
+        }
+
+    /**
+     * Último nivel de batería conocido, 0-100, o -1 mientras no haya llegado ninguno.
+     *
+     * Lo alimenta el receptor de `ACTION_BATTERY_CHANGED` de [BtServerService], que
+     * es el proceso vivo siempre. Aquí es un campo y no una consulta porque
+     * [refresh] lo llama todo el mundo —receivers, `onDestroy`, el hilo de captura—
+     * y ninguno de esos sitios tiene un `Context` a mano.
+     */
+    @Volatile var nivelBateria = -1
+        private set
+
+    /**
+     * El último color escrito, para no repetir la escritura.
+     *
+     * `ACTION_BATTERY_CHANGED` no llega solo al cambiar el porcentaje —también con
+     * la temperatura o el voltaje—, y cada escritura del nodo cuesta ~44 ms en la
+     * unidad, o ~0,7 s si cae al `sh -c`. Solo se guarda cuando la escritura ha ido
+     * bien: si falló, el siguiente `refresh()` vuelve a intentarlo.
+     */
+    @Volatile private var ultimoColor = SIN_COLOR
+
+    /** Nuevo nivel de batería; repinta solo si el color cambia. */
+    fun actualizarBateria(nivel: Int) {
+        if (nivel == nivelBateria) return
+        nivelBateria = nivel
+        refresh()
+    }
 
     fun refresh() {
         if (apagando) return
-        when {
-            RecordingActivity.isRecording -> HardwareController.ledRedBlink()
-            LivestreamService.isStreaming -> HardwareController.ledYellowBlink()
-            RecordingActivity.state == CaptureState.ARMED -> HardwareController.ledBlue()
-            else -> HardwareController.ledGreen()
+        val color = colorActual()
+        if (color == ultimoColor) return
+        ultimoColor = if (HardwareController.setLed(color)) color else SIN_COLOR
+    }
+
+    /**
+     * El color que le toca a la unidad ahora mismo, sin escribir nada.
+     *
+     * Separado de [refresh] para poder razonarlo —y probarlo— sin hardware delante.
+     */
+    fun colorActual(): Int {
+        val grabando = RecordingActivity.isRecording
+        return when {
+            // La batería baja se impone al estado: si además graba, el rojo parpadea,
+            // que es justo el color de grabar. Las dos señales caben en una.
+            bateriaBaja() -> if (grabando) HardwareController.LED_ROJO_PARPADEO
+                             else HardwareController.LED_ROJO
+            grabando -> HardwareController.LED_ROJO_PARPADEO
+            LivestreamService.isStreaming -> HardwareController.LED_AMARILLO_PARPADEO
+            nivelBateria >= BATERIA_VERDE -> HardwareController.LED_VERDE
+            nivelBateria >= BATERIA_AZUL  -> HardwareController.LED_AZUL
+            // Sin nivel conocido todavía: código de estado de siempre.
+            RecordingActivity.state == CaptureState.ARMED -> HardwareController.LED_AZUL
+            else -> HardwareController.LED_VERDE
         }
     }
+
+    /** Ojo con el -1: "desconocido" no es "vacía". */
+    private fun bateriaBaja() = nivelBateria in 0 until BATERIA_AZUL
 }
 
 // Controla el hardware de la bodycam vía los nodos sysfs documentados en W1-4G
@@ -51,14 +140,32 @@ object HardwareController {
     // ── LEDs RGB ──────────────────────────────────────────────────────────────
     // 0=off | 1-6=rojo creciente | 7=verde fijo | 8=rojo parpadeo
     // 9=amarillo parpadeo | 10=azul fijo
+    //
+    // Quién usa cada color lo decide [LedSignals]; esto es solo la tabla del nodo.
     private val LED_NODE = File("/sys/class/i2c-dev/i2c-2/device/2-0045/aw2013_regs")
 
+    const val LED_APAGADO           = 0
+    /**
+     * Rojo fijo = batería por debajo del 40 %.
+     *
+     * **Sin verificar en la unidad** (2026-09-22: no había ninguna conectada). Los
+     * valores 1-6 son rojo de brillo creciente según la tabla del fabricante, y 6 es
+     * el más vivo, pero los únicos comprobados a mano son 0, 7, 8, 9 y 10. Si en el
+     * aparato se ve apagado o demasiado débil, es este número y se cambia aquí solo.
+     */
+    const val LED_ROJO              = 6
+    const val LED_VERDE             = 7
+    const val LED_ROJO_PARPADEO     = 8
+    const val LED_AMARILLO_PARPADEO = 9
+    const val LED_AZUL              = 10
+
     fun setLed(value: Int) = writeNode(LED_NODE, value.toString())
-    fun ledOff()           = setLed(0)
-    fun ledGreen()         = setLed(7)   // standby
-    fun ledRedBlink()      = setLed(8)   // grabando
-    fun ledYellowBlink()   = setLed(9)   // procesando
-    fun ledBlue()          = setLed(10)  // cargando
+    fun ledOff()           = setLed(LED_APAGADO)
+    fun ledRed()           = setLed(LED_ROJO)              // batería baja
+    fun ledGreen()         = setLed(LED_VERDE)             // batería llena
+    fun ledRedBlink()      = setLed(LED_ROJO_PARPADEO)     // grabando
+    fun ledYellowBlink()   = setLed(LED_AMARILLO_PARPADEO) // emitiendo
+    fun ledBlue()          = setLed(LED_AZUL)              // batería media
 
     // ── Sensor de luz ─────────────────────────────────────────────────────────
     private val LIGHT_ENABLE = File("/sys/class/input/input0/driver/enable")
@@ -108,7 +215,7 @@ object HardwareController {
         // alumbra y que `ModoNoche.arrancar()` vuelve a poner en cada encendido, va
         // el último y es lo único prescindible de esta lista.
         IR_NODE to "0",
-        LED_NODE to "0",
+        LED_NODE to LED_APAGADO.toString(),
         LIGHT_ENABLE to "0",
         MOTOR_NODE to "0",
     )

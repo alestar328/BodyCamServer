@@ -763,8 +763,9 @@ class RecordingActivity : ComponentActivity() {
             setScreenAwake(true)
         }
         mainHandler.post(monitorTick)
-        // Azul fijo = en buffer (lo decide LedSignals por estado). Es la señal de
-        // producto: en servicio, guardando los últimos 20 s sin que nadie grabe.
+        // El LED lo decide LedSignals: en ARMED ya no hay color propio —desde que el
+        // LED indica también la carga, reposo y buffer se ven igual—, pero hay que
+        // repintar igual porque el nivel de batería manda por debajo del 40 %.
         LedSignals.refresh()
         notifyStateChanged()
         Log.d(TAG, "ARMED — anillo activo")
