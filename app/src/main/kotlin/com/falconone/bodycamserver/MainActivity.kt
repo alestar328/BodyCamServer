@@ -129,6 +129,7 @@ class MainActivity : ComponentActivity() {
         DeviceOwner.aplicarPoliticas(this)
         with(DeviceOwner) { atenderOrdenDeMantenimiento(intent) }
         with(UploadCancel) { atenderOrdenDeSubida(intent) }
+        val asistentePedido = PerfilDispositivo.atenderOrdenDePerfil(this, intent)
 
         goImmersive()
         DeviceOwner.sujetarPantalla(this)
@@ -154,6 +155,10 @@ class MainActivity : ComponentActivity() {
             UploadService.resumePending(applicationContext)
         }
 
+        // Un modelo que no reconocemos arranca sin botones: sin el asistente, la
+        // unidad no podría ni grabar ni lanzar un SOS con las teclas.
+        if (asistentePedido || PerfilDispositivo.necesitaAsistente()) abrirAsistente()
+
         registerReceiver(
             recordingReceiver,
             IntentFilter(RecordingActivity.ACTION_STATE_CHANGED)
@@ -171,6 +176,16 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG) atenderAltaDeIdentidadDebug(intent)
         with(DeviceOwner) { atenderOrdenDeMantenimiento(intent) }
         with(UploadCancel) { atenderOrdenDeSubida(intent) }
+        if (PerfilDispositivo.atenderOrdenDePerfil(this, intent)) abrirAsistente()
+    }
+
+    /**
+     * Encima de todo, también de RecordingActivity, que se pone delante al armar.
+     * Se retrasa un poco por eso mismo: `arm()` lanza la de grabación desde
+     * `startService()` y, abierto a la vez, el asistente podía quedar debajo.
+     */
+    private fun abrirAsistente() {
+        handler.postDelayed({ startActivity(Intent(this, AsistenteActivity::class.java)) }, 1_500)
     }
 
     // Al recuperar el foco (vuelta de RecordingActivity, de un diálogo de permisos)
@@ -204,20 +219,6 @@ class MainActivity : ComponentActivity() {
         RecordingActivity.arm(this)
     }
 
-    private fun toggleRecording() {
-        if (RecordingActivity.ignoreRecordKey()) {
-            Log.d("FalconKeys", "Pulsación descartada: pregunta de envío recién abierta")
-            return
-        }
-        if (RecordingActivity.isRecording) {
-            // Parada manual desde la unidad: pregunta antes de subir.
-            RecordingActivity.stop(this, askUpload = true)
-        } else {
-            TorchController.release()
-            RecordingActivity.start(this)
-        }
-    }
-
     // El SOS de la bodycam es el livestream (mismo comportamiento que la tecla F3):
     // pulsar emite, volver a pulsar corta, y el teléfono lo detecta por Agora
     // (el vídeo de esta unidad aparece y desaparece del canal).
@@ -239,26 +240,11 @@ class MainActivity : ComponentActivity() {
 
     // ── Botones físicos ───────────────────────────────────────────────────────
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        Log.d("FalconKeys", "MainActivity onKeyDown: $keyCode")
-        // F2 (PTT) NO se atiende aquí: lo lleva el broadcast SIDE_KEY_INTENT en
-        // BtServerService, que además es la única vía que funciona con la pantalla
-        // apagada. Con la Activity en foco onKeyDown auto-repite cada 50 ms y un
-        // mantenido largo conmutaba el micro una decena de veces.
-        when (keyCode) {
-            KeyEvent.KEYCODE_F3 -> {
-                if (!ButtonDebounce.tryAcquire()) return true
-                toggleLivestream()
-            }
-            KeyEvent.KEYCODE_F4 -> {
-                if (!ButtonDebounce.tryAcquire()) return true
-                toggleRecording()
-                refresh()  // respuesta visual inmediata
-            }
-            else -> return super.onKeyDown(keyCode, event)
-        }
-        return true
-    }
+    // Solo cuenta si el perfil del modelo tiene algún botón atado a la vía de la
+    // Activity; si no, BotonesFisicos lo deja pasar. En la W1 van todos por el
+    // broadcast del fabricante (ver BtServerService.botonesReceiver).
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        BotonesFisicos.recibir(Pulsacion.de(event, Fuente.ACTIVIDAD)) || super.dispatchKeyEvent(event)
 
     // ── Permisos ──────────────────────────────────────────────────────────────
 

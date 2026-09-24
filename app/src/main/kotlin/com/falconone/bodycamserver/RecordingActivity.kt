@@ -964,15 +964,12 @@ class RecordingActivity : ComponentActivity() {
 
     // ── Botones físicos ───────────────────────────────────────────────────────
 
-    // F4 grabando → detener con pregunta. El resto pasa de largo.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_F4 && isRecording) {
-            Log.d(TAG, "F4 → stop recording")
-            stopIncident(askUpload = true)
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
-    }
+    // Las teclas van a BotonesFisicos, como en MainActivity. Antes aquí F4 paraba
+    // la grabación por su cuenta, en paralelo al broadcast del fabricante y
+    // separado de él solo por el antirrebote; ahora el botón GRABAR para por la
+    // misma vía que arranca (BtServerService.ejecutar), con la misma pregunta.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        BotonesFisicos.recibir(Pulsacion.de(event, Fuente.ACTIVIDAD)) || super.dispatchKeyEvent(event)
 
     // ── Preview ───────────────────────────────────────────────────────────────
 

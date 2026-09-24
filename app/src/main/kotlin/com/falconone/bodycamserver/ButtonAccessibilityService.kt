@@ -1,57 +1,47 @@
 package com.falconone.bodycamserver
 
-import android.accessibilityservice.AccessibilityService
+import android.os.PowerManager
 import android.util.Log
+import android.accessibilityservice.AccessibilityService
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 
 private const val TAG = "FalconKeys"
 
 /**
- * Captures physical button presses (F2/F3/F4) even when the screen is off
- * or our Activities are not in the foreground.
+ * Teclas físicas por la vía estándar de Android para teclas globales: llegan
+ * aunque la app no esté delante.
  *
- * Activation (one-time, user must do this after first install):
- *   Settings → Accessibility → FalconOne → Enable
+ * Activación (una vez por unidad): la hace `tools/kiosco.sh poner`. Ni un device
+ * owner puede encender un servicio de accesibilidad por su cuenta.
  *
- * Button layout (YIMAO W1):
- *   F2 = PTT                  → NO se toca aquí; lo lleva BtServerService
- *   F3 = side button top      → IR LED on/off toggle
- *   F4 = side button bottom   → linterna
+ * Aquí no se decide nada: la pulsación va en bruto a [BotonesFisicos], que sabe por
+ * el perfil del modelo qué botón es y si esta vía es la suya. En la W1 no lo es —sus
+ * botones van por el broadcast del fabricante— y todo pasa de largo.
  *
- * OJO: lo que F3 y F4 hacen aquí (IR y linterna) no coincide con el mapa de
- * BtServerService (livestream y grabación). La contradicción es anterior al PTT y
- * sigue abierta; este servicio está desactivado en la unidad, así que hoy manda el
- * broadcast.
+ * **Con la pantalla apagada puede no llegar nada.** Android solo pasa a la
+ * accesibilidad las teclas que van a llegar al usuario, y con la pantalla apagada
+ * el sistema tira las que no despiertan el aparato. Por eso el asistente comprueba
+ * cada botón con la pantalla apagada en vez de darlo por hecho.
+ *
+ * Hasta el 2026-09-24 este servicio les daba a F3 y F4 el IR y la linterna, en
+ * contra del mapa del broadcast (SOS y grabar). Con el kiosco, que lo activa, una
+ * pulsación de F3 lanzaba el SOS **y** conmutaba el IR. Se quitó: el IR lo lleva
+ * [ModoNoche] solo y la linterna, el teléfono.
  */
 class ButtonAccessibilityService : AccessibilityService() {
 
-    private var irEnabled = false
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        PerfilDispositivo.cargar(this)
+    }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.action != KeyEvent.ACTION_DOWN) return false
-        Log.d(TAG, "KeyEvent: ${event.keyCode}")
-        return when (event.keyCode) {
-            // F2 es el PTT y se atiende SOLO en el broadcast SIDE_KEY_INTENT de
-            // BtServerService, que llega igual con la pantalla apagada. Si también
-            // se conmutase aquí, el broadcast (que el firmware emite al SOLTAR) y
-            // este onKeyEvent (que llega al PULSAR) se separarían más que los
-            // 300 ms de ButtonDebounce en cualquier pulsación larga, y el micro se
-            // abriría y cerraría de golpe. Se deja pasar sin consumir.
-            KeyEvent.KEYCODE_F2 -> false
-            KeyEvent.KEYCODE_F3 -> {
-                irEnabled = !irEnabled
-                if (irEnabled) HardwareController.irOn() else HardwareController.irOff()
-                Log.d(TAG, "F3 → IR ${if (irEnabled) "ON" else "OFF"}")
-                true
-            }
-            KeyEvent.KEYCODE_F4 -> {
-                val on = TorchController.toggle()
-                Log.d(TAG, "F4 → Torch ${if (on) "ON" else "OFF"}")
-                true
-            }
-            else -> false
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            Log.d(TAG, "Accesibilidad: ${event.keyCode} scan=${event.scanCode}")
         }
+        val pantalla = (getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+        return BotonesFisicos.recibir(Pulsacion.de(event, Fuente.ACCESIBILIDAD, pantalla))
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {}

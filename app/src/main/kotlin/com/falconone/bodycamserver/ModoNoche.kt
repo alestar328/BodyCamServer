@@ -81,6 +81,9 @@ object ModoNoche {
     @Volatile var esDeNoche = false
         private set
 
+    /** Si está corriendo. El asistente lo para durante la autoprueba del IR y lo devuelve como estaba. */
+    val activo: Boolean get() = hilo != null
+
     /**
      * Aviso a la cámara abierta para que grabe en blanco y negro de noche. Lo pone
      * RecordingActivity al configurar la sesión y lo quita al cerrarla: el sensor y

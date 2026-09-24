@@ -31,7 +31,7 @@ object Cmd {
 
 const val FILE_SERVER_PORT = 8080
 
-// Debounce compartido entre sideKeyReceiver y onKeyDown para evitar doble disparo
+// Antirrebote de los botones físicos. Lo usa BotonesFisicos, que es su única puerta.
 object ButtonDebounce {
     @Volatile private var lastMs = 0L
     fun tryAcquire(): Boolean {

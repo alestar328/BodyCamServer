@@ -128,13 +128,23 @@ object LedSignals {
     private fun bateriaBaja() = nivelBateria in 0 until BATERIA_AZUL
 }
 
-// Controla el hardware de la bodycam vía los nodos sysfs documentados en W1-4G
+/**
+ * Controla el hardware de la bodycam vía nodos sysfs.
+ *
+ * Las rutas salen del perfil del modelo ([PerfilDispositivo]); las de la W1-4G son
+ * las de su documentación. Una pieza sin ruta (`null`) es una pieza que el modelo no
+ * tiene o que no sabemos mover: su función devuelve `false` y no escribe nada, y
+ * quien la llama sigue igual que si la escritura hubiera fallado.
+ */
 object HardwareController {
 
-    // ── Luz infrarroja ────────────────────────────────────────────────────────
-    private val IR_NODE = File("/sys/class/i2c-dev/i2c-2/device/2-0064/ocp_regs")
+    private fun nodo(ruta: String?): File? = ruta?.let(::File)
+    private val nodos get() = PerfilDispositivo.actual.nodos
 
-    fun irOn()  = writeNode(IR_NODE, "1")
+    // ── Luz infrarroja ────────────────────────────────────────────────────────
+    private val IR_NODE get() = nodo(nodos.ir)
+
+    fun irOn()  = writeNode(IR_NODE, nodos.irValor)
     fun irOff() = writeNode(IR_NODE, "0")
 
     // ── LEDs RGB ──────────────────────────────────────────────────────────────
@@ -142,7 +152,9 @@ object HardwareController {
     // 9=amarillo parpadeo | 10=azul fijo
     //
     // Quién usa cada color lo decide [LedSignals]; esto es solo la tabla del nodo.
-    private val LED_NODE = File("/sys/class/i2c-dev/i2c-2/device/2-0045/aw2013_regs")
+    // La tabla de valores es la del aw2013 de la W1. En otro modelo con LED en otra
+    // ruta, los números pueden significar otra cosa: hay que revisarla con él delante.
+    private val LED_NODE get() = nodo(nodos.led)
 
     const val LED_APAGADO           = 0
     /**
@@ -168,25 +180,25 @@ object HardwareController {
     fun ledBlue()          = setLed(LED_AZUL)              // batería media
 
     // ── Sensor de luz ─────────────────────────────────────────────────────────
-    private val LIGHT_ENABLE = File("/sys/class/input/input0/driver/enable")
-    private val LIGHT_VALUE  = File("/sys/class/input/input0/driver/lux")
+    private val LIGHT_ENABLE get() = nodo(nodos.luzActivar)
+    private val LIGHT_VALUE  get() = nodo(nodos.luzValor)
 
     fun lightSensorOn()  = writeNode(LIGHT_ENABLE, "1")
     fun lightSensorOff() = writeNode(LIGHT_ENABLE, "0")
-    fun readLux(): Int = try { LIGHT_VALUE.readText().trim().toInt() } catch (_: Exception) { -1 }
+    fun readLux(): Int = try { LIGHT_VALUE?.readText()?.trim()?.toInt() ?: -1 } catch (_: Exception) { -1 }
 
     // ── Motor IR-CUT (filtro día/noche) ───────────────────────────────────────
     // Sentido medido con la cámara el 2026-09-18, sacando un fotograma del visor con
     // cada valor: "0" da colores normales y "1" la imagen magenta de un sensor sin
     // filtro. Hasta entonces los comentarios decían lo contrario (1 = día), sin que
     // nada lo usara todavía.
-    private val MOTOR_NODE = File("/sys/class/misc/wiite_con_ctrl/motor_enable")
+    private val MOTOR_NODE get() = nodo(nodos.filtroIr)
 
     fun filtroIrPuesto()  = writeNode(MOTOR_NODE, "0")  // modo día
     fun filtroIrQuitado() = writeNode(MOTOR_NODE, "1")  // modo noche, deja pasar el IR
 
     // ── GPS BeiDou ────────────────────────────────────────────────────────────
-    private val GPS_NODE = File("/sys/class/misc/wiite_con_ctrl/beidou_enable")
+    private val GPS_NODE get() = nodo(nodos.gps)
 
     fun gpsOn()  = writeNode(GPS_NODE, "1")
     fun gpsOff() = writeNode(GPS_NODE, "0")
@@ -220,8 +232,15 @@ object HardwareController {
         MOTOR_NODE to "0",
     )
 
+    /**
+     * Escribe en una ruta que todavía no está en el perfil. Solo para la autoprueba
+     * del asistente, que prueba nodos candidatos antes de darlos por buenos.
+     */
+    fun escribirCandidato(ruta: String, valor: String): Boolean = writeNode(File(ruta), valor)
+
     // ── Helper ────────────────────────────────────────────────────────────────
-    private fun writeNode(file: File, value: String): Boolean {
+    private fun writeNode(file: File?, value: String): Boolean {
+        if (file == null) return false
         if (escrituraDirecta(file, value)) return true
         // Requiere permisos root para algunos nodos — intentar vía shell.
         val ok = shell("echo $value > ${file.absolutePath}")
@@ -238,8 +257,9 @@ object HardwareController {
      * Eso importa solo en el apagado, donde el sistema da ~10 s para **todos** los
      * receptores de ACTION_SHUTDOWN, no para el nuestro; agrupadas son ~0,7 s.
      */
-    private fun writeNodes(vararg nodos: Pair<File, String>): Boolean {
-        val pendientes = nodos.filterNot { (file, value) -> escrituraDirecta(file, value) }
+    private fun writeNodes(vararg nodos: Pair<File?, String>): Boolean {
+        val pendientes = nodos.mapNotNull { (file, value) -> file?.let { it to value } }
+            .filterNot { (file, value) -> escrituraDirecta(file, value) }
         if (pendientes.isEmpty()) return true
         val guion = pendientes.joinToString("; ") { (file, value) -> "echo $value > ${file.absolutePath}" }
         val ok = shell(guion)

@@ -24,7 +24,6 @@ import android.os.PowerManager
 import java.net.HttpURLConnection
 import java.net.URL
 import android.util.Log
-import android.view.KeyEvent
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
@@ -114,116 +113,97 @@ class BtServerService : Service() {
         }
     }
 
-    // Physical button mapping — VERIFIED via logcat (FalconSmoke / SIDE_KEY_INTENT)
-    // on 2026-06-03 (confirmed THREE times). Each physical button emits:
-    //   • 132 / KEYCODE_F2 = "PTT / audio" button → conmuta el micro en Agora     → BTN_PTT_ON/OFF
-    //   • 133 / KEYCODE_F3 = "SOS" button         → toggle Agora livestream       → BTN_STREAM_*
-    //   • 134 / KEYCODE_F4 = "record" button      → toggle local recording        → BTN_REC_*
+    // Botones físicos. Qué tecla es cada acción ya no está aquí: lo dice el perfil
+    // del modelo (PerfilDispositivo) y lo decide BotonesFisicos, que es la única
+    // puerta. Este receptor solo traduce los broadcasts del fabricante; las teclas
+    // normales entran por ButtonAccessibilityService y por las Activities.
     //
-    // El PTT (132) vive SOLO aquí, en el broadcast del firmware. Se quitó de
-    // MainActivity.onKeyDown y del servicio de accesibilidad a propósito: medido el
-    // 2026-09-08 en la unidad, el broadcast llega siempre —pantalla apagada, sin
-    // Activity delante— y con Activity en foco onKeyDown además AUTO-REPITE cada
-    // 50 ms, así que un mantenido largo conmutaba el micro varias veces. Una sola
-    // puerta y el conmutador es fiable.
-    //
-    // The physical SOS button (133) is wired to LIVESTREAM on purpose: the bodycam
-    // joining Agora with video IS the SOS signal the phone reacts to. In Falcon One,
-    // BTN_STREAM_* / bodycam video live == SOS popup. Normal recording (134) stays local
-    // and must NEVER raise SOS on the phone. Do NOT swap F3/F4 — this matches the
-    // hardware (we flip-flopped twice before the logcat settled it).
-    private val sideKeyReceiver = object : BroadcastReceiver() {
+    // En la W1 (medido por logcat el 2026-06-03, tres veces, y el 2026-09-08) los
+    // tres botones llegan por SIDE_KEY_INTENT: 132/F2 = PTT, 133/F3 = SOS, 134/F4 =
+    // grabar. El broadcast llega siempre —pantalla apagada, sin Activity delante— y
+    // es la vía que usa su perfil por defecto. Con Activity en foco onKeyDown además
+    // AUTO-REPITE cada 50 ms: por eso cada botón se ata a una sola vía.
+    private val botonesReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != "android.intent.action.SIDE_KEY_INTENT") return
-            val keyCode = intent.getIntExtra("key_code", 0)
-            val status  = intent.getIntExtra("key_status", -1)
-            Log.d(TAG, "SideKey key_code=$keyCode key_status=$status")
-            if (status == 1) return  // ignore release; accept 0 (press) and -1 (W1 firmware)
-            if (!ButtonDebounce.tryAcquire()) return  // onKeyDown already handled this press
-
-            // Run on executor so RtcEngine.create/destroy don't block the main thread.
-            // This keeps sideKeyReceiver fast (<5ms) so onKeyDown arrives while debounce
-            // is still active (within 300ms) and gets correctly discarded.
-            when (keyCode) {
-                KeyEvent.KEYCODE_F2 -> executor.execute {
-                    // Abrir el micro sin red daría un PTT_ON que no transmite nada:
-                    // Agora crearía el engine y fallaría al entrar en el canal por
-                    // dentro. Cerrarlo sí se permite siempre, para poder callar.
-                    if (!cachedWifiOk && !LivestreamService.isMicEnabled) {
-                        Log.d(TAG, "SideKey F2 → PTT descartado: sin conexión")
-                        // Sin sonido el agente cree que ha abierto el micro y habla
-                        // solo: el zumbido es lo único que se lo dice ahí fuera.
-                        PttTones.denegado()
-                        send(Rsp.error("Sin WiFi — el PTT viaja por el canal de Agora"))
-                    } else {
-                        val on = LivestreamService.togglePtt(applicationContext)
-                        Log.d(TAG, "SideKey F2 → PTT mic ${if (on) "ON" else "OFF"}")
-                        val fallo = LivestreamService.lastPttError
-                        when {
-                            on -> send(Ntf.PTT_ON)
-                            // Cerrar es un OFF normal; no abrir es un error que el
-                            // agente tiene que ver, no un PTT que se apaga solo.
-                            fallo != null -> { send(Rsp.error(fallo)); send(Ntf.PTT_OFF) }
-                            else -> send(Ntf.PTT_OFF)
-                        }
-                    }
-                }
-                KeyEvent.KEYCODE_F3 -> executor.execute {
-                    if (LivestreamService.sosActivo) {
-                        Log.d(TAG, "SideKey F3 → STREAM STOP")
-                        LivestreamService.stop()
-                        send(Ntf.STREAM_STOP)
-                    } else {
-                        // LivestreamService cede la cámara y rearma al terminar.
-                        PreviewController.stop()
-                        Log.d(TAG, "SideKey F3 → STREAM START")
-                        val ok = LivestreamService.start(context)
-                        send(if (ok) Ntf.STREAM_START else Rsp.error("Agora no pudo iniciar"))
-                    }
-                }
-                KeyEvent.KEYCODE_F4 -> executor.execute {
-                    // Rebote del mismo botón que acaba de parar: sin esto se leía
-                    // isRecording=false y arrancaba otra grabación encima de la
-                    // pregunta de envío, con la pantalla apagándose acto seguido.
-                    if (RecordingActivity.ignoreRecordKey()) {
-                        Log.d(TAG, "SideKey F4 descartado: pregunta de envío recién abierta")
-                        return@execute
-                    }
-                    if (RecordingActivity.isRecording) {
-                        Log.d(TAG, "SideKey F4 → STOP recording")
-                        RecordingActivity.stop(context, askUpload = true)
-                        send(Ntf.REC_STOP)
-                    } else {
-                        Log.d(TAG, "SideKey F4 → START recording")
-                        TorchController.release()
-                        PreviewController.stop()
-                        RecordingActivity.start(context)
-                        send(Ntf.REC_START)
-                    }
-                }
-            }
+            val pantalla = (getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+            BotonesFisicos.deBroadcast(intent, pantalla)?.let { BotonesFisicos.recibir(it) }
         }
     }
 
-    // ── SMOKE TEST (vendor com.smarteye.mcu side-key broadcasts) ───────────────
-    // Confirms whether the firmware's physical-button broadcasts reach a 3rd-party
-    // runtime-registered receiver. Filter logcat with tag "FalconSmoke".
-    // Remove this block once the coexistence strategy is validated.
-    private val smokeKeyActions = arrayOf(
-        "android.intent.action.PRESS_VIDEO_KEY",  "android.intent.action.LONG_PRESS_VIDEO_KEY",
-        "android.intent.action.PRESS_RECORD_KEY", "android.intent.action.LONG_PRESS_RECORD_KEY",
-        "android.intent.action.PRESS_PIC_KEY",    "android.intent.action.LONG_PRESS_PIC_KEY",
-        "android.intent.action.DOWN_PTT_KEY",     "android.intent.action.UP_PTT_KEY",
-        "android.intent.action.PRESS_SOS_KEY",    "android.intent.action.LONG_PRESS_SOS_KEY",
-        "android.intent.action.PRESS_MARK_KEY",   "android.intent.action.LONG_PRESS_MARK_KEY",
-        // also the keycode-style broadcast used by the DSI variant, just in case:
-        "android.intent.action.SIDE_KEY_INTENT",
-    )
-    private val smokeKeyReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val sb = StringBuilder()
-            intent.extras?.let { ex -> for (k in ex.keySet()) sb.append("$k=${ex.get(k)} ") }
-            Log.i("FalconSmoke", "BTN action=${intent.action}  extras[$sb]")
+    private fun registrarBotones() {
+        try { unregisterReceiver(botonesReceiver) } catch (_: Exception) {}
+        registerReceiver(botonesReceiver, BotonesFisicos.filtroBroadcasts())
+    }
+
+    /**
+     * Lo que hace cada botón. Lo llama [BotonesFisicos] ya resuelto el botón y pasado
+     * el antirrebote; aquí solo se ejecuta y se avisa al teléfono.
+     *
+     * En el executor para que RtcEngine.create/destroy no bloqueen el hilo principal
+     * ni al receptor que entrega la pulsación.
+     *
+     * El SOS físico es el LIVESTREAM a propósito: que la bodycam entre en Agora con
+     * vídeo ES la señal de SOS a la que reacciona el teléfono. La grabación normal se
+     * queda en local y NUNCA debe levantar un SOS en el teléfono.
+     */
+    private fun ejecutar(accion: Accion) = executor.execute {
+        when (accion) {
+            Accion.PTT -> {
+                // Abrir el micro sin red daría un PTT_ON que no transmite nada:
+                // Agora crearía el engine y fallaría al entrar en el canal por
+                // dentro. Cerrarlo sí se permite siempre, para poder callar.
+                if (!cachedWifiOk && !LivestreamService.isMicEnabled) {
+                    Log.d(TAG, "Botón PTT → descartado: sin conexión")
+                    // Sin sonido el agente cree que ha abierto el micro y habla
+                    // solo: el zumbido es lo único que se lo dice ahí fuera.
+                    PttTones.denegado()
+                    send(Rsp.error("Sin WiFi — el PTT viaja por el canal de Agora"))
+                } else {
+                    val on = LivestreamService.togglePtt(applicationContext)
+                    Log.d(TAG, "Botón PTT → mic ${if (on) "ON" else "OFF"}")
+                    val fallo = LivestreamService.lastPttError
+                    when {
+                        on -> send(Ntf.PTT_ON)
+                        // Cerrar es un OFF normal; no abrir es un error que el
+                        // agente tiene que ver, no un PTT que se apaga solo.
+                        fallo != null -> { send(Rsp.error(fallo)); send(Ntf.PTT_OFF) }
+                        else -> send(Ntf.PTT_OFF)
+                    }
+                }
+            }
+            Accion.SOS -> {
+                if (LivestreamService.sosActivo) {
+                    Log.d(TAG, "Botón SOS → STREAM STOP")
+                    LivestreamService.stop()
+                    send(Ntf.STREAM_STOP)
+                } else {
+                    // LivestreamService cede la cámara y rearma al terminar.
+                    PreviewController.stop()
+                    Log.d(TAG, "Botón SOS → STREAM START")
+                    val ok = LivestreamService.start(applicationContext)
+                    send(if (ok) Ntf.STREAM_START else Rsp.error("Agora no pudo iniciar"))
+                }
+            }
+            Accion.GRABAR -> {
+                // Rebote del mismo botón que acaba de parar: sin esto se leía
+                // isRecording=false y arrancaba otra grabación encima de la
+                // pregunta de envío, con la pantalla apagándose acto seguido.
+                if (RecordingActivity.ignoreRecordKey()) {
+                    Log.d(TAG, "Botón GRABAR descartado: pregunta de envío recién abierta")
+                    return@execute
+                }
+                if (RecordingActivity.isRecording) {
+                    Log.d(TAG, "Botón GRABAR → STOP recording")
+                    RecordingActivity.stop(applicationContext, askUpload = true)
+                    send(Ntf.REC_STOP)
+                } else {
+                    Log.d(TAG, "Botón GRABAR → START recording")
+                    TorchController.release()
+                    PreviewController.stop()
+                    RecordingActivity.start(applicationContext)
+                    send(Ntf.REC_START)
+                }
+            }
         }
     }
 
@@ -277,8 +257,12 @@ class BtServerService : Service() {
             send(Ntf.PTT_OFF)
         }
         registerReceiver(apagadoReceiver, ApagadoReceiver.filtro())
-        registerReceiver(sideKeyReceiver, IntentFilter("android.intent.action.SIDE_KEY_INTENT"))
-        registerReceiver(smokeKeyReceiver, IntentFilter().apply { smokeKeyActions.forEach { addAction(it) } })
+        PerfilDispositivo.cargar(this)
+        BotonesFisicos.ejecutor = ::ejecutar
+        registrarBotones()
+        // El asistente puede añadir broadcasts del fabricante: hay que escucharlos
+        // sin esperar a que se reinicie el servicio.
+        PerfilDispositivo.alCambiar = { Handler(Looper.getMainLooper()).post(::registrarBotones) }
         acquireWifiLock()
         connectivityHandler.post(connectivityChecker)
         // La unidad escucha el canal todo el tiempo, para que el PTT de los teléfonos
@@ -314,8 +298,9 @@ class BtServerService : Service() {
         connectivityHandler.removeCallbacks(connectivityChecker)
         try { unregisterReceiver(apagadoReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(bateriaReceiver) } catch (_: Exception) {}
-        try { unregisterReceiver(sideKeyReceiver) } catch (_: Exception) {}
-        try { unregisterReceiver(smokeKeyReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(botonesReceiver) } catch (_: Exception) {}
+        BotonesFisicos.ejecutor = null
+        PerfilDispositivo.alCambiar = null
         // Desarmar del todo: disarm sella el incidente en curso si lo hay.
         if (RecordingActivity.isHoldingCamera) RecordingActivity.disarm(this)
         connectedClient = null

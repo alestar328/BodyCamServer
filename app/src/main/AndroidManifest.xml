@@ -71,6 +71,15 @@
             android:launchMode="singleTask"
             android:exported="false" />
 
+        <!-- Asistente de instalación: aprende los botones y el hardware de un modelo
+             que no conocemos (ver AsistenteActivity). Misma orientación que las
+             otras dos por el mismo motivo: el giro del panel es uno solo. -->
+        <activity
+            android:name=".AsistenteActivity"
+            android:theme="@style/Theme.FalconPanel"
+            android:screenOrientation="landscape"
+            android:exported="false" />
+
         <!-- Servidor BT — persiste en background -->
         <!-- foregroundServiceType no disponible en API 28 -->
         <service
@@ -105,7 +114,8 @@
             </intent-filter>
         </receiver>
 
-        <!-- Captura de botones físicos (pantalla apagada / app en background) -->
+        <!-- Captura de botones físicos con la app en background. Con la pantalla
+             apagada puede no llegar nada: el asistente lo comprueba botón a botón. -->
         <!-- Hay que activarlo una vez por unidad. Lo hace `tools/kiosco.sh poner`
              con `settings put secure enabled_accessibility_services`: en kiosco ya
              no se llega a Ajustes → Accesibilidad, y ni un device owner puede
