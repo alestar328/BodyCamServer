@@ -381,6 +381,7 @@ class BtServerService : Service() {
             // La atadura no sobrevive al enlace: mientras no hay telefono, la
             // camara no esta al servicio de nadie.
             binding = null
+            AgenteDeServicio.soltar()
             closeClient()
             // Sin teléfono nadie mira el visor: se libera la cámara para no
             // drenar batería. Si el enlace vuelve, el teléfono lo reabre.
@@ -395,6 +396,8 @@ class BtServerService : Service() {
         // certificados en base64 y llenaria el log de ruido en cada conexion.
         if (raw.startsWith("AUTH_")) return procesarEmparejamiento(raw)
         if (raw.startsWith("BIND") || raw.startsWith("UNBIND")) return procesarAtadura(raw)
+        // Antes del log: la línea lleva una credencial.
+        if (raw.startsWith("TOKEN")) return procesarToken(raw)
 
         Log.d(TAG, "CMD: $raw")
         val parts = raw.split(":")
@@ -597,6 +600,37 @@ class BtServerService : Service() {
         } else {
             actual.atender(raw, enCurso.nonce, ancla)
         }
+    }
+
+    /**
+     * Token de la sesión del agente que presta el teléfono, para subir la evidencia:
+     * `TOKEN:<jwt>:<segundos de vida>` o `TOKEN_CLEAR` al cerrarse la sesión.
+     *
+     * Solo de un teléfono acreditado, por lo mismo que la atadura: si no, cualquiera
+     * que conozca el UUID podría hacer que la unidad suba con una credencial suya.
+     * Sobrevive a la caída del enlace a propósito: una subida de un vídeo largo no
+     * debe pararse por un micro-corte del Bluetooth.
+     */
+    private fun procesarToken(raw: String): String {
+        if (emparejamiento?.telefonoAutenticado == null) {
+            return "TOKEN_FAIL:el telefono no se ha acreditado\n"
+        }
+        if (raw == "TOKEN_CLEAR") {
+            UploadConfig.retirarToken()
+            Log.i(TAG, "token de la sesión retirado")
+            return "TOKEN_OK\n"
+        }
+        val partes = raw.removePrefix("TOKEN:").split(":")
+        val token = partes.getOrNull(0)
+        val segundos = partes.getOrNull(1)?.toLongOrNull()
+        if (token.isNullOrBlank() || segundos == null) return "TOKEN_FAIL:formato\n"
+        if (segundos <= 0) return "TOKEN_FAIL:caducado\n"
+
+        UploadConfig.prestarToken(token, segundos)
+        Log.i(TAG, "token de la sesión recibido, vale ${segundos / 60} min")
+        // Lo que esperaba credencial sale ahora, sin esperar al siguiente arranque.
+        UploadService.resumePending(applicationContext)
+        return "TOKEN_OK\n"
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

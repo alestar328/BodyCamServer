@@ -59,7 +59,7 @@ object SosNotifier {
             .put("channel", AGORA_CHANNEL)
             .put("uid", BodycamIdentity.uidAgora(context))
             .put("bwc_id", BodycamIdentity.bwcId(context))
-            .put("officer_code", HardcodedOfficer.badge)
+            .put("officer_code", AgenteDeServicio.oficial().badge)
             .put("device_id", androidId(context))
             .put("device_model", Build.MODEL)
             .put("started_at", ahoraIso())

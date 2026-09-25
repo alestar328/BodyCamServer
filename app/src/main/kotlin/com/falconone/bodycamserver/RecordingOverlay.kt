@@ -123,9 +123,9 @@ fun RecordingOverlay(
     onAnswer: (Boolean) -> Unit,
     panel: PanelState? = null,
     onSos: () -> Unit = {},
-    // TODO: integrar con datos reales — hoy llega el hardcodeado de Officer.kt;
-    // cuando exista la sesión del oficial, el llamante pasará la identidad real.
-    officer: Officer = HardcodedOfficer,
+    // El agente atado ahora mismo (AgenteDeServicio): en pantalla se ve a quién sirve
+    // la cámara en este instante, no a quién se atribuye el incidente en curso.
+    officer: Officer = AgenteDeServicio.oficial(),
     rotationDegrees: Float = OVERLAY_ROTATION_DEGREES,
 ) {
     Box(Modifier.fillMaxSize()) {

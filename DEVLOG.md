@@ -10,6 +10,82 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-25 (2) — Los vídeos van a nombre del agente atado; adiós a "John Smith"
+
+### Por qué
+
+El rótulo del proxy, el overlay, el manifiesto, los nombres de fichero, la subida y el aviso
+de SOS salían de `HardcodedOfficer` (John Smith, Corporal, 36975), fuera quien fuese el agente.
+
+### Hecho
+
+- **`Officer.kt`:** fuera `HardcodedOfficer`. Nuevos `SinAgente` (UNASSIGNED / - / NOAGENT) y
+  `AgenteDeServicio`, el agente al que sirve la cámara ahora: lo pone `BindingAgente` al
+  aceptar un BIND, lo quita el UNBIND o la caída del enlace, y caduca solo al leerlo. Es estado
+  de Compose, así que el overlay se repinta solo.
+- **Lo rotulado sale de la declaración firmada** (`officer_name/rank/badge`, que el teléfono
+  añade desde hoy). Un teléfono antiguo no los manda y se rotula el `user_id`.
+- **El incidente congela su agente** al empezar a grabar, en `incidents/<id>/officer.json`
+  (`EvidenceStore.guardarOficial` / `oficialDe`). Lo leen el manifiesto (con `officer_user_id`
+  nuevo), los nombres de fichero, el proxy y la subida: la grabación sobrevive a un corte del
+  Bluetooth y la atadura no.
+- **Si empezó sin agente** (Bluetooth caído justo al pulsar) y se ata uno **mientras sigue
+  grabando**, el incidente pasa a su nombre. Después de parar, no.
+- **Sin agente se rotula UNASSIGNED**, no un nombre inventado. Los incidentes anteriores (sin
+  `officer.json`) también salen así en la subida: no se les atribuye nadie.
+- El SOS manda la placa del agente atado en ese momento.
+
+### Pendiente
+
+- **Sin probar con hardware**. Depende de la atadura (wf 33/34), que nunca se ha verificado
+  en los aparatos: si no ata, todo sale UNASSIGNED.
+- ~~Ojo con la hora~~ **Resuelto el mismo día:** la atadura llegaba con `expires_at` absoluto
+  del teléfono y la W1 lo comparaba con su reloj (6 h de desfase ya visto → 6 h de vigencia,
+  o rechazo si pasaba de 12 h). Ahora `BindingAgente` toma la duración firmada
+  (`expires_at − issued_at`, las dos del reloj del teléfono) y la cuenta desde su propio
+  reloj. Tope de 12 h, la que firma el teléfono. Lo viejo lo sigue rechazando el nonce de la
+  sesión. Sin cambios en el teléfono. Compila; sin probar con hardware.
+
+---
+
+## 2026-09-25 — La unidad sube con el token de la sesión del agente, que le presta el teléfono
+
+### Por qué
+
+La unidad subía con `stub-token` y el backend real exige un JWT de sesión con alcance
+`video.upload`: **ningún vídeo de la bodycam llegaba a AeriaOne**. El backend solo abre
+sesión al teléfono. De las tres salidas (token reducido emitido por el backend, sesión propia
+de la unidad, o usar el del teléfono) **el usuario eligió la tercera** para la demo: no toca
+el backend.
+
+### Hecho
+
+- **Comando nuevo `TOKEN:<jwt>:<segundos de vida>`** y **`TOKEN_CLEAR`**; responde `TOKEN_OK`
+  o `TOKEN_FAIL:<motivo>`. Solo se atiende con el teléfono **acreditado** (workflow 31), como
+  la atadura. Se procesa antes del `Log.d("CMD")`: la línea lleva una credencial.
+- **`UploadConfig.token()`** devuelve el prestado mientras viva; si no, la línea `token=` del
+  `upload.conf` (solo para el stub). Solo en memoria. Lo usan la subida y el aviso de SOS.
+- Segundos de vida y no hora de caducidad: el reloj de la unidad ha ido 6 h desfasado.
+- Al recibirlo, `UploadService.resumePending`: lo que esperaba credencial sale en el acto.
+- **No se retira al caerse el enlace**: un micro-corte del BT no debe parar un vídeo largo.
+  Se retira con `TOKEN_CLEAR` (bloqueo o fin de turno en el teléfono) o al caducar.
+
+### Lo que se acepta con esta decisión
+
+- La unidad tiene **todos** los alcances del agente (no solo `video.upload`) mientras dure la
+  sesión: un turno, 8 h.
+- El token viaja por un RFCOMM **sin cifrar**.
+- En el backend las subidas de la unidad figuran con el **terminal del agente** como
+  dispositivo (la metadata sigue diciendo `source=bodycam`).
+- La salida limpia es un token reducido ligado al binding, emitido por el backend.
+
+### Pendiente
+
+- **Sin probar con hardware**: no había W1 ni teléfono conectados. Compila.
+- Va con la entrada del mismo día en el DEVLOG de Aeria Nexus: las dos apps tienen que ir juntas.
+
+---
+
 ## 2026-09-21 (madrugada) — Apagar la unidad apaga también las luces
 
 ### Por qué

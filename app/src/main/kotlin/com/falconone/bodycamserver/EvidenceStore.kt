@@ -62,6 +62,7 @@ object EvidenceStore {
     private const val SEGMENT_PREFIX = "SEG_"
     private const val SEGMENT_SUFFIX = ".mp4"
     private const val MANIFEST_NAME = "manifest.json"
+    private const val OFFICER_NAME = "officer.json"
 
     private val root: File
         get() = File(Environment.getExternalStorageDirectory(), "FalconOne")
@@ -112,12 +113,11 @@ object EvidenceStore {
      * hora de inicio del segmento. Ordenar por nombre sigue siendo ordenar
      * cronológicamente, porque dentro de un incidente la placa es la misma.
      *
-     * TODO: integrar con datos reales — la placa sale de [HardcodedOfficer]
-     * hasta que exista la sesión autenticada del oficial (ver Officer.kt).
+     * La placa es la del agente congelado en el incidente ([oficialDe]).
      */
-    fun evidenceName(startMillis: Long): String =
+    fun evidenceName(incidentId: String, startMillis: Long): String =
         "%s_%s%s".format(
-            HardcodedOfficer.badge,
+            oficialDe(incidentId).badge,
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startMillis)),
             SEGMENT_SUFFIX,
         )
@@ -215,6 +215,46 @@ object EvidenceStore {
      */
     fun proxyDir(incidentId: String): File = File(File(incidentsDir, incidentId), PROXY_DIR)
 
+    // ── A nombre de quién va el incidente ─────────────────────────────────────
+
+    /** Incidente que empezó sin agente atado y puede completarse si se ata uno. */
+    @Volatile private var pendienteDeAgente: String? = null
+
+    /**
+     * Congela el agente del incidente al empezar a grabar, en `officer.json`.
+     *
+     * Del incidente y no del momento: la atadura cae con el Bluetooth y la grabación
+     * no, así que el rótulo, los nombres de fichero, el manifiesto, el proxy y la
+     * subida —que llegan minutos u horas después— leen de aquí.
+     */
+    fun guardarOficial(incidentId: String, oficial: Officer) {
+        pendienteDeAgente = incidentId.takeIf { oficial == SinAgente }
+        runCatching { File(incidentDir(incidentId), OFFICER_NAME).writeText(oficial.toJson().toString(2)) }
+            .onFailure { Log.e(TAG, "$incidentId: no se pudo guardar el agente: ${it.message}") }
+    }
+
+    /**
+     * Un incidente que empezó sin agente (el Bluetooth caído justo al pulsar grabar)
+     * pasa a nombre del agente que se ate MIENTRAS sigue grabando. Después de parar
+     * no: quien se ata luego no estaba cuando se grabó.
+     */
+    fun completarOficial(oficial: Officer) {
+        val id = pendienteDeAgente ?: return
+        pendienteDeAgente = null
+        if (!RecordingActivity.isRecording) return
+        Log.i(TAG, "$id empezó sin agente: pasa a ${oficial.userId}")
+        guardarOficial(id, oficial)
+    }
+
+    /**
+     * El agente del incidente. [SinAgente] si no hay `officer.json`: los incidentes
+     * de antes de este cambio llevan rotulado un agente de demostración que nadie
+     * ató, y no se les inventa otro.
+     */
+    fun oficialDe(incidentId: String): Officer =
+        runCatching { Officer.fromJson(JSONObject(File(File(incidentsDir, incidentId), OFFICER_NAME).readText())) }
+            .getOrDefault(SinAgente)
+
     private const val PROXY_DIR = "proxy"
 
     /** Incidentes más recientes primero. */
@@ -284,7 +324,7 @@ object EvidenceStore {
      */
     fun adoptIntoIncident(incidentId: String, segment: File): File? {
         val start = startMillisOf(segment)
-        var dest = File(incidentDir(incidentId), evidenceName(start))
+        var dest = File(incidentDir(incidentId), evidenceName(incidentId, start))
         if (dest.exists()) {
             // Dos segmentos arrancando en el mismo segundo: imposible con segmentos
             // de ~15 s, pero un nombre pisado destruiría evidencia. Se desambigua
@@ -340,13 +380,13 @@ object EvidenceStore {
         val manifest = JSONObject().apply {
             put("incident_id", incidentId)
             put("device_model", android.os.Build.MODEL)
-            // Identidad del oficial portador — el "Officer ID" de EVD-002.
-            // TODO: integrar con datos reales — HardcodedOfficer es de demo; cuando
-            // exista la sesión autenticada, la identidad debe llegar como parámetro
-            // desde el emparejamiento, no leerse de una constante.
-            put("officer_name", HardcodedOfficer.name)
-            put("officer_rank", HardcodedOfficer.rank)
-            put("officer_badge", HardcodedOfficer.badge)
+            // Identidad del oficial portador — el "Officer ID" de EVD-002. Es el agente
+            // atado al empezar a grabar, o UNASSIGNED si no habia ninguno.
+            val oficial = oficialDe(incidentId)
+            put("officer_name", oficial.name)
+            put("officer_rank", oficial.rank)
+            put("officer_badge", oficial.badge)
+            put("officer_user_id", oficial.userId ?: JSONObject.NULL)
             put("armed_at_epoch_ms", armedAtMillis)
             put("trigger_epoch_ms", triggerMillis)
             put("stopped_epoch_ms", stoppedMillis)
