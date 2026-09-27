@@ -10,6 +10,256 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-29 (PLAN) — Reparto del día: dos sesiones en paralelo, workflows sin backend
+
+Escrito el 28-sep por la noche. **El mismo texto está en el DEVLOG de los dos repos.**
+Objetivo de 2 días: el código de 6-8 workflows más y 3-4 verificados en aparatos. Lo
+que solo compile se apunta como "compila, sin probar", no como terminado.
+
+### 0 · Antes de paralelizar (el usuario, ~30 min)
+
+1. **Commit en los dos repos.** Hoy hay trabajo de dos sesiones sin commitear mezclado
+   en los mismos ficheros: BodyCamServer `dev_device_owner` (token prestado, agente
+   atado, workflow 31 v2) y Aeria Nexus `dev_back_connection` (sesión, token, workflow
+   31 v2). Trabajar en paralelo encima de eso es arriesgado.
+2. **Anclas de la W1: opción B** (ver abajo), salvo que se decida otra cosa. Sin esto
+   no se prueba nada que pase por el emparejamiento.
+3. Tener conectados **la W1 y un teléfono dado de alta contra el backend** (Samsung).
+
+**Las anclas, en corto.** La W1 valida al teléfono con `files/identity/ca.pem` (y la
+atadura con `user-ca.pem`), que son de la CA de pruebas; el backend firma los teléfonos
+con `qpd-device-ca`/`qpd-user-ca`. Y la W1 presenta un certificado de la CA de pruebas,
+que un teléfono con las anclas del backend tampoco aceptaría. Tres salidas:
+- **A · Solo las anclas del backend en la W1, por adb.** La W1 aceptaría al teléfono,
+  pero su propio certificado seguiría siendo de la CA de pruebas: media solución.
+- **B · Alta de la W1 contra el IAM (recomendada).** El backend ya lo soporta sin
+  tocarlo: `POST /api/iam/devices/enroll` con `device_kind` bodycam respeta el
+  `BWC-xxxx` y devuelve el certificado y las **dos** anclas. En la W1 ya existen las
+  órdenes por adb (`bwc_enroll`, `bwc_cert`, `bwc_anchor`, `bwc_user_anchor`). Falta
+  llevar el CSR al endpoint con el secreto de enrolamiento. Aprox. 1 h.
+- **C · Que el backend firme con la CA de pruebas.** Toca el backend y rebaja su PKI. No.
+
+**Añadido tras revisarlo la sesión AN (28-sep, noche).** Con la opción B la W1
+presentará un certificado de `qpd-device-ca`, pero el teléfono la valida con su ancla de
+periféricos (`perifericos.ca.pem`), que hoy solo se instala por adb con la CA de pruebas:
+**no guarda el `device_ca_pem` que le devuelve su propio alta**. Sin arreglarlo, el
+teléfono rechazaría a la W1 ya dada de alta. Es la tarea **AN-0**, que va antes de BC-1:
+guardar esa ancla al darse de alta y conseguirla para el Samsung, ya dado de alta, sin
+repetir el alta o por adb. La sesión AN avisa cuando esté.
+
+### Sesión BC — BodyCamServer (dueña del adb de la W1)
+
+1. **Alta de la W1 contra el IAM (opción B)** y prueba de punta a punta con el teléfono:
+   emparejamiento v2 y canal cifrado (wf 31), atadura con nombre real (33/34), token
+   prestado y subida al backend (40). Coordinar con la sesión AN el turno del teléfono.
+   Si todo sale, proponer al usuario `EXIGIR_CANAL_CIFRADO = true`.
+2. **Wf 61 en la unidad: diario de auditoría local.** Portar `AuditoriaLocal` del móvil
+   (HMAC encadenado con clave propia del Keystore). Eventos: emparejamiento, atadura,
+   token, grabar/parar, SOS, subida, cancelación, apagado. Hoy la unidad no tiene ninguno.
+3. **Wf 30 en la unidad: fin de turno.** Hoy `FIN_DE_TURNO` solo se registra. Que desate,
+   retire el token y lo apunte en el diario del punto 2.
+
+### Sesión AN — Aeria Nexus (dueña del teléfono)
+
+1. Ayudar a la prueba del punto BC-1 con el teléfono cuando la sesión BC lo pida.
+2. **Wf 53: certificado que caduca en plena grabación.** Política local con periodo de
+   gracia mientras se graba.
+3. **Wf 51: grabación sin red, gobernada.** Conjunto cerrado de lo que se permite sin red,
+   en vez de "todo funciona offline sin control".
+4. **Wf 66: detectar el reseteo de fábrica** y exigir alta nueva en vez de seguir con
+   carpetas huérfanas.
+5. Si sobra tiempo, **wf 46**: el evento de auditoría ya existe desde el 15-sep
+   (`EVIDENCIA_VISUALIZADA` y los de bóveda); lo que falta es el permiso de visionado
+   por política.
+
+### Compartidos: una sola sesión hace las dos puntas
+
+- **Wf 37 + 36: firma y procedencia de la evidencia.** Toca el formato que leerá el
+  backend en el wf 41, así que va en una sola sesión (la BC, tras su punto 1) y con
+  entrada nueva en `docs/CRYPTO-FORMAT.md`. **Decisión previa del usuario:** qué clave
+  firma. Propuesta: cada aparato con su clave de identidad (la BWC en la bodycam, la del
+  terminal en el móvil) y el agente dentro de lo firmado, por la atadura.
+- **Wf 21 (cadena de build: SAST, SCA, secretos)** si queda hueco: no toca código de las
+  apps; puede ir a un subagente en su propio worktree.
+
+### Reglas del día
+
+- Cada sesión escribe solo en su repo. Si un cambio toca el protocolo entre las dos, lo
+  hace una sola sesión en los dos lados y avisa a la otra antes (como el 28-sep).
+- La W1 por adb es de una sesión a la vez: la BC. Las pruebas en aparatos van por turnos.
+- Al cerrar: agente `coherencia-bodycam-movil` (ocho puntos), DEVLOG de cada repo y horas
+  al libro del manager (filas libres 57-65, una fila por app y bloque).
+
+---
+
+## 2026-09-28 — El canal Bluetooth con el teléfono va cifrado (workflow 31, v2)
+
+### Por qué
+
+El RFCOMM entre el teléfono y la W1 iba en claro. Desde el 25-sep por él viaja el
+token de la sesión del agente (`TOKEN:<jwt>:<segundos>`), que vale para subir a
+AeriaOne con todos los alcances del agente, y cualquiera con un receptor Bluetooth
+cerca podía leerlo. Es el paso 6 del workflow 31, el siguiente de la lista
+«Sin-backend-YA»: las dos puntas son nuestras.
+
+### Hecho (en las dos apps, que tienen que ir juntas)
+
+- **Emparejamiento v2 (`AERIA-BWC-2`).** `AUTH_HELLO` y `AUTH_ID` llevan un quinto
+  campo: una clave pública ECDH P-256 **efímera**, de una sola conexión y fuera del
+  Keystore (las claves de identidad son de firma y no sirven para acordar secretos).
+  Las dos efímeras entran en la transcripción que firma cada extremo: quien estuviera
+  en medio no puede cambiarlas por las suyas sin romper las dos firmas.
+- **`CanalCifrado.kt`, idéntico en los dos repositorios** (solo cambia el `package`).
+  Tras `AUTH_OK` cada línea viaja como `S:<base64>` con AES-256-GCM. Una clave por
+  sentido (HKDF-SHA256 del secreto ECDH, con los dos nonces de sal) y el IV es un
+  contador implícito: una trama repetida, quitada, reordenada o devuelta a quien la
+  mandó no descifra, y **un solo fallo rompe el canal** y se corta la conexión.
+- **Modo transición (decisión del usuario, 28-sep).** La bodycam sigue aceptando v1
+  (autentica sin cifrar) y comandos en claro de un teléfono que no se empareja,
+  porque sus anclas son las de la CA de pruebas y el backend firma los teléfonos con
+  otras: exigirlo ya dejaría la W1 sin nadie que la maneje. El interruptor es
+  `EXIGIR_CANAL_CIFRADO` en `BtServerService.kt`, hoy `false`.
+- **Lo que sí se exige ya:** `TOKEN` solo por el canal cifrado (`TOKEN_FAIL:hace
+  falta el canal cifrado`). Con el canal puesto, una línea en claro se rechaza en los
+  dos extremos.
+
+### Detalle de este lado
+
+- `Emparejamiento.kt`: acepta v1 (4 campos) y v2 (5 campos); en v2 acuerda el canal
+  (`canalAcordado`) al acreditar al teléfono y olvida la privada efímera.
+- `BtServerService.kt`: `AUTH_OK` sale en claro y el canal se activa en el mismo
+  cerrojo que `send()`, para que ningún `BTN_*` de otro hilo se cuele en medio;
+  `abrir()` descifra cada línea entrante; `send()` cifra línea a línea. Un segundo
+  emparejamiento dentro de un canal ya acordado se rechaza.
+
+### Pendiente
+
+- **Sin probar con hardware.** Las 13 pruebas JVM del lado del teléfono pasan
+  (`EmparejamientoBodycamTest`, con una bodycam de referencia que es espejo de este
+  `Emparejamiento.kt`), pero el código de ESTA app no tiene pruebas propias: la
+  coincidencia byte a byte con el teléfono se confirma en el primer emparejamiento real.
+- No se podrá probar de punta a punta hasta **alinear las anclas** de la W1 con las
+  CA del backend (ver 25-sep (3)). Después, pasar `EXIGIR_CANAL_CIFRADO` a `true`.
+
+---
+
+## 2026-09-25 (3) — Prueba en la W1 sin teléfono: lo de "sin agente" funciona, y un fallo arreglado
+
+Rama `dev_device_owner` (los cambios de hoy se replicaron aquí desde `dev_install_assistant`;
+el asistente de instalación queda aparcado). APK debug 1.4 instalado con `install -r`: la
+identidad de la unidad (`files/identity`) sobrevive.
+
+### Verificado en la W1 (sin teléfono, así que sin atadura)
+
+- Grabar con el botón simulado (`SIDE_KEY_INTENT 134`) y parar: `INC_000038` e `INC_000039`.
+- `officer.json` = UNASSIGNED / - / NOAGENT; ficheros `NOAGENT_<fecha>_<hora>.mp4`.
+- Manifiesto con `officer_name/rank/badge` de `officer.json`.
+- **Rótulo quemado en el proxy**, descifrado con `tools/dev-keys`: "Officer: UNASSIGNED /
+  Rank: - Badge: NOAGENT". Ya no sale John Smith.
+
+### Fallo encontrado y arreglado
+
+El manifiesto de `INC_000038` llevaba `"officer_user_id": "null"` (**texto**). `Officer.fromJson`
+usaba `optString`, que con un null de JSON devuelve la cadena "null". Arreglado con `isNull`;
+`INC_000039`, grabado con el arreglo, lleva `null` de verdad.
+
+### Lo que NO se ha podido probar (hace falta un teléfono)
+
+Emparejamiento, atadura con nombre real, token prestado, vigencia por duración. Y hay un
+bloqueo previo, **confirmado hoy en la unidad**: sus anclas (`files/identity/ca.pem` y
+`user-ca.pem`) son las de la CA de pruebas, y el backend firma con otras (`qpd-device-ca` /
+`qpd-user-ca`, claves públicas distintas). Un teléfono dado de alta contra el backend será
+rechazado por la W1 en el emparejamiento. Pendiente de decidir cómo se alinean.
+
+### Observaciones de la prueba
+
+- El reloj de la W1 está bien: 21:50 CST (UTC+8) es la misma hora que 15:50 CEST. El
+  "desfase de 6 h" era la zona horaria.
+- Tras reinstalar, la primera pulsación simulada se perdió: llegó mientras la app se armaba.
+- `enabled_accessibility_services` sale `null` en la unidad. No se ha tocado.
+- En el incidente quedan el `.mp4` **en claro** junto al `.fev`. No es de hoy, pero es
+  evidencia sin cifrar en la tarjeta: revisar cuándo se borra el claro.
+- Los dos incidentes de prueba reintentan subir al stub `192.168.0.14:1080` del `upload.conf`,
+  que no está levantado. Se pueden cancelar desde el teléfono (pantalla UPLOADS).
+
+---
+
+## 2026-09-25 (2) — Los vídeos van a nombre del agente atado; adiós a "John Smith"
+
+### Por qué
+
+El rótulo del proxy, el overlay, el manifiesto, los nombres de fichero, la subida y el aviso
+de SOS salían de `HardcodedOfficer` (John Smith, Corporal, 36975), fuera quien fuese el agente.
+
+### Hecho
+
+- **`Officer.kt`:** fuera `HardcodedOfficer`. Nuevos `SinAgente` (UNASSIGNED / - / NOAGENT) y
+  `AgenteDeServicio`, el agente al que sirve la cámara ahora: lo pone `BindingAgente` al
+  aceptar un BIND, lo quita el UNBIND o la caída del enlace, y caduca solo al leerlo. Es estado
+  de Compose, así que el overlay se repinta solo.
+- **Lo rotulado sale de la declaración firmada** (`officer_name/rank/badge`, que el teléfono
+  añade desde hoy). Un teléfono antiguo no los manda y se rotula el `user_id`.
+- **El incidente congela su agente** al empezar a grabar, en `incidents/<id>/officer.json`
+  (`EvidenceStore.guardarOficial` / `oficialDe`). Lo leen el manifiesto (con `officer_user_id`
+  nuevo), los nombres de fichero, el proxy y la subida: la grabación sobrevive a un corte del
+  Bluetooth y la atadura no.
+- **Si empezó sin agente** (Bluetooth caído justo al pulsar) y se ata uno **mientras sigue
+  grabando**, el incidente pasa a su nombre. Después de parar, no.
+- **Sin agente se rotula UNASSIGNED**, no un nombre inventado. Los incidentes anteriores (sin
+  `officer.json`) también salen así en la subida: no se les atribuye nadie.
+- El SOS manda la placa del agente atado en ese momento.
+
+### Pendiente
+
+- **Sin probar con hardware**. Depende de la atadura (wf 33/34), que nunca se ha verificado
+  en los aparatos: si no ata, todo sale UNASSIGNED.
+- ~~Ojo con la hora~~ **Resuelto el mismo día:** la atadura llegaba con `expires_at` absoluto
+  del teléfono y la W1 lo comparaba con su reloj (6 h de desfase ya visto → 6 h de vigencia,
+  o rechazo si pasaba de 12 h). Ahora `BindingAgente` toma la duración firmada
+  (`expires_at − issued_at`, las dos del reloj del teléfono) y la cuenta desde su propio
+  reloj. Tope de 12 h, la que firma el teléfono. Lo viejo lo sigue rechazando el nonce de la
+  sesión. Sin cambios en el teléfono. Compila; sin probar con hardware.
+
+---
+
+## 2026-09-25 — La unidad sube con el token de la sesión del agente, que le presta el teléfono
+
+### Por qué
+
+La unidad subía con `stub-token` y el backend real exige un JWT de sesión con alcance
+`video.upload`: **ningún vídeo de la bodycam llegaba a AeriaOne**. El backend solo abre
+sesión al teléfono. De las tres salidas (token reducido emitido por el backend, sesión propia
+de la unidad, o usar el del teléfono) **el usuario eligió la tercera** para la demo: no toca
+el backend.
+
+### Hecho
+
+- **Comando nuevo `TOKEN:<jwt>:<segundos de vida>`** y **`TOKEN_CLEAR`**; responde `TOKEN_OK`
+  o `TOKEN_FAIL:<motivo>`. Solo se atiende con el teléfono **acreditado** (workflow 31), como
+  la atadura. Se procesa antes del `Log.d("CMD")`: la línea lleva una credencial.
+- **`UploadConfig.token()`** devuelve el prestado mientras viva; si no, la línea `token=` del
+  `upload.conf` (solo para el stub). Solo en memoria. Lo usan la subida y el aviso de SOS.
+- Segundos de vida y no hora de caducidad: el reloj de la unidad ha ido 6 h desfasado.
+- Al recibirlo, `UploadService.resumePending`: lo que esperaba credencial sale en el acto.
+- **No se retira al caerse el enlace**: un micro-corte del BT no debe parar un vídeo largo.
+  Se retira con `TOKEN_CLEAR` (bloqueo o fin de turno en el teléfono) o al caducar.
+
+### Lo que se acepta con esta decisión
+
+- La unidad tiene **todos** los alcances del agente (no solo `video.upload`) mientras dure la
+  sesión: un turno, 8 h.
+- El token viaja por un RFCOMM **sin cifrar**.
+- En el backend las subidas de la unidad figuran con el **terminal del agente** como
+  dispositivo (la metadata sigue diciendo `source=bodycam`).
+- La salida limpia es un token reducido ligado al binding, emitido por el backend.
+
+### Pendiente
+
+- **Sin probar con hardware**: no había W1 ni teléfono conectados. Compila.
+- Va con la entrada del mismo día en el DEVLOG de Aeria Nexus: las dos apps tienen que ir juntas.
+
+---
+
 ## 2026-09-21 (madrugada) — Apagar la unidad apaga también las luces
 
 ### Por qué

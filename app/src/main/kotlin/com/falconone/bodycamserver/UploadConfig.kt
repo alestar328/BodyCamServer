@@ -30,10 +30,9 @@ private const val TAG = "FalconUploadCfg"
  *
  * ── Lo que aquí es stub y lo que no ───────────────────────────────────────────
  *
- * [token] es un stub declarado: hoy vale cualquier cosa no vacía porque el
- * servidor de pruebas no valida nada. Existe para que el cliente ejercite el
- * camino de mandar la credencial, y para que el día que haya login de oficial
- * (AUTH-001) se sustituya la fuente del token y no el transporte.
+ * [token] es, desde el 2026-09-25, el de la sesión del agente que presta el
+ * teléfono. La línea `token=` del fichero queda solo para el stub de pruebas, que
+ * no valida nada.
  *
  * [DEFAULT_BASE_URL] queda vacío a propósito. Un default apuntando a producción
  * haría que una unidad sin `upload.conf` empezara a mandar evidencia a un sitio
@@ -97,7 +96,29 @@ object UploadConfig {
         return if (raw.isBlank() || raw.endsWith("/")) raw else "$raw/"
     }
 
-    fun token(): String = conf()["token"]?.takeIf { it.isNotBlank() } ?: DEFAULT_TOKEN
+    /**
+     * Token de la sesión del agente, prestado por el teléfono por el enlace autenticado
+     * (ver BtServerService.procesarToken). Solo en memoria: tras un reinicio no hay
+     * credencial hasta que el teléfono vuelve a conectar y la reenvía.
+     */
+    @Volatile private var prestado: String? = null
+    @Volatile private var prestadoHastaMillis = 0L
+
+    /** Con segundos de vida y no con hora de caducidad: el reloj de la unidad no es fiable. */
+    fun prestarToken(token: String, segundosDeVida: Long) {
+        prestadoHastaMillis = System.currentTimeMillis() + segundosDeVida * 1_000
+        prestado = token
+    }
+
+    fun retirarToken() {
+        prestado = null
+    }
+
+    /** El prestado si sigue vivo; si no, el de upload.conf (stub de pruebas). */
+    fun token(): String =
+        prestado?.takeIf { System.currentTimeMillis() < prestadoHastaMillis }
+            ?: conf()["token"]?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_TOKEN
 
     fun chunkBytes(): Int =
         conf()["chunk_bytes"]?.toIntOrNull()?.takeIf { it in 64 * 1024..64 * 1024 * 1024 }

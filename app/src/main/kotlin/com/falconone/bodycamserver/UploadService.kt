@@ -185,10 +185,11 @@ class UploadService : IntentService("FalconUploadService") {
             Log.w(TAG, "$incidentId se sube SIN cifrar — no hay .fev")
         }
 
+        val oficial = EvidenceStore.oficialDe(incidentId)
         val base = mutableMapOf(
             "incident_id" to incidentId,
-            "officer_code" to HardcodedOfficer.badge,
-            "officer_name" to HardcodedOfficer.name,
+            "officer_code" to oficial.badge,
+            "officer_name" to oficial.name,
             "device_id" to (Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
                 ?: "unknown-device"),
             "device_model" to android.os.Build.MODEL,

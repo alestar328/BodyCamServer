@@ -38,7 +38,7 @@ object IncidentProxy {
 
         val started = System.currentTimeMillis()
         val made = try {
-            VideoStamper.makeProxy(original, plain, HardcodedOfficer, IncidentAssembler.rotationOf(original))
+            VideoStamper.makeProxy(original, plain, EvidenceStore.oficialDe(incidentId), IncidentAssembler.rotationOf(original))
         } catch (e: Exception) {
             Log.e(TAG, "$incidentId: el proxy falló: ${e.message}")
             false

@@ -72,12 +72,27 @@ la derivación de nonce y AAD.
 **7 · `manifest.json`.** Lo escribe `EvidenceStore.writeManifest` en la bodycam. Si el
 teléfono lo parsea, los nombres de campo tienen que cuadrar.
 
+**8 · Emparejamiento y canal cifrado (workflow 31, v2 desde el 2026-09-28).** Dos
+ficheros que tienen que coincidir byte a byte:
+
+- `ProtocoloEmparejamiento.transcripcion(...)`, en `Emparejamiento.kt` (bodycam) y
+  `EmparejamientoBodycam.kt` (teléfono): mismos campos, mismo orden, separador `|`, y las
+  dos claves efímeras al final solo en v2. Si divergen, **ningún teléfono se acredita**.
+- `CanalCifrado.kt`, idéntico salvo el `package` en los dos repos. Compruébalo igual que
+  el punto 6 (`strip` + `diff`). Vigila la curva (`secp256r1`), las cadenas `info` de
+  HKDF, el `AAD`, el prefijo `S:` y el formato del IV (4 bytes a cero + contador de 8).
+
+Y dos reglas de comportamiento: la bodycam activa el canal justo **después** de escribir
+`AUTH_OK` en claro, y el teléfono lo instala **antes** de `marcarEnlace(SI)` (que dispara
+el préstamo del token). `EXIGIR_CANAL_CIFRADO` en `BtServerService.kt` es el modo
+transición; si pasa a `true`, avisa de que un teléfono sin canal ya no puede mandar nada.
+
 ## Cómo trabajas
 
 1. Lee primero el estado real de los dos repos: `git log --oneline -10` y
    `git status --porcelain` en cada uno. **El trabajo sin commitear cuenta** — mucha
    divergencia vive ahí.
-2. Recorre los siete puntos. Usa `grep` sobre los dos árboles; no te fíes de la memoria.
+2. Recorre los ocho puntos. Usa `grep` sobre los dos árboles; no te fíes de la memoria.
 3. Para cada hallazgo di **qué lado se movió**, desde qué commit si puedes verlo, y **qué
    se rompe en runtime** — no basta con decir que difieren.
 

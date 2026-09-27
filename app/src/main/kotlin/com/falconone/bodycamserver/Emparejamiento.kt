@@ -22,10 +22,16 @@ private const val TAG = "Emparejamiento"
  *
  * El intercambio son cuatro lineas sobre el mismo canal de texto de siempre:
  *
- *     telefono -> bodycam   AUTH_HELLO:<version>:<deviceId>:<nonceA>
- *     bodycam  -> telefono  AUTH_ID:<bwcId>:<nonceB>:<certificado>
+ *     telefono -> bodycam   AUTH_HELLO:<version>:<deviceId>:<nonceA>[:<efimeraA>]
+ *     bodycam  -> telefono  AUTH_ID:<bwcId>:<nonceB>:<certificado>[:<efimeraB>]
  *     telefono -> bodycam   AUTH_PROOF:<firma>:<certificado>
  *     bodycam  -> telefono  AUTH_OK:<firma>          o  AUTH_FAIL:<motivo>
+ *
+ * **Version 2 (2026-09-28): el canal queda cifrado.** Las dos lineas del saludo
+ * llevan una clave publica ECDH efimera, las dos entran en lo que se firma, y tras
+ * `AUTH_OK` todo lo demas va como `S:<base64>` (ver [CanalCifrado]). La version 1,
+ * sin las claves efimeras, se sigue aceptando mientras haya telefonos con la app
+ * anterior: autentica pero no cifra, como hasta ahora.
  *
  * Este fichero es la contraparte de `EmparejamientoBodycam.kt` en Aeria Nexus, y
  * el protocolo esta probado alli con los dos extremos hablando entre si, incluidas
@@ -35,8 +41,13 @@ private const val TAG = "Emparejamiento"
  */
 object ProtocoloEmparejamiento {
 
-    /** Va firmada para que nadie pueda negociar a la baja cambiando el saludo. */
-    const val VERSION = "AERIA-BWC-1"
+    /**
+     * Van firmadas para que nadie pueda negociar a la baja cambiando el saludo: si
+     * alguien en medio cambia un v2 por un v1, el telefono firma "v2", nosotros
+     * comprobariamos "v1", y la prueba no cuadra.
+     */
+    const val VERSION_1 = "AERIA-BWC-1"
+    const val VERSION_2 = "AERIA-BWC-2"
 
     const val ALGORITMO_FIRMA = Pkcs10.ALGORITMO_FIRMA
     const val NONCE_BYTES = 32
@@ -52,24 +63,33 @@ object ProtocoloEmparejamiento {
      *  - **los dos identificadores**, para que una prueba valida entre otro
      *    telefono y otra camara no sirva aqui;
      *  - **los dos nonces**, para que ninguno de los dos pueda decidir por su
-     *    cuenta lo que se va a firmar y precalcularlo.
+     *    cuenta lo que se va a firmar y precalcularlo;
+     *  - **las dos claves efimeras** (solo v2), para que nadie en medio pueda
+     *    cambiarlas por las suyas: seria autenticar a los dos extremos y aun asi
+     *    leer todo lo que se dicen.
+     *
+     * En v1 las claves efimeras son null y la transcripcion sale byte a byte igual
+     * que antes de la v2.
      */
     fun transcripcion(
+        version: String,
         rol: Rol,
         deviceId: String,
         bwcId: String,
         nonceDelTelefono: ByteArray,
         nonceDeLaBodycam: ByteArray,
+        efimeraDelTelefono: String? = null,
+        efimeraDeLaBodycam: String? = null,
     ): ByteArray {
         val codificador = Base64.getEncoder()
-        return listOf(
-            VERSION,
+        return (listOf(
+            version,
             rol.name,
             deviceId,
             bwcId,
             codificador.encodeToString(nonceDelTelefono),
             codificador.encodeToString(nonceDeLaBodycam),
-        ).joinToString("|").toByteArray(Charsets.UTF_8)
+        ) + listOfNotNull(efimeraDelTelefono, efimeraDeLaBodycam)).joinToString("|").toByteArray(Charsets.UTF_8)
     }
 
     fun nonce(): ByteArray = ByteArray(NONCE_BYTES).also { SecureRandom().nextBytes(it) }
@@ -87,6 +107,19 @@ class EmparejamientoDeLaBodycam(private val context: Context) {
     val nonce = ProtocoloEmparejamiento.nonce()
     private var nonceDelTelefono: ByteArray? = null
     private var deviceId: String? = null
+    private var version = ProtocoloEmparejamiento.VERSION_1
+
+    /** Solo v2: la efimera del telefono tal y como viajo, y nuestro par. */
+    private var efimeraDelTelefono: String? = null
+    private var efimeraPropia: java.security.KeyPair? = null
+
+    /**
+     * El canal cifrado acordado, en cuanto el telefono se acredita por v2.
+     * [BtServerService] lo activa justo DESPUES de escribir `AUTH_OK` en claro: el
+     * telefono no tiene las claves hasta haber comprobado esa linea.
+     */
+    var canalAcordado: CanalCifrado? = null
+        private set
 
     /** Quien esta al otro lado, una vez acreditado. Null mientras no lo este. */
     var telefonoAutenticado: String? = null
@@ -105,21 +138,31 @@ class EmparejamientoDeLaBodycam(private val context: Context) {
      */
     fun responderASaludo(linea: String): String {
         val partes = linea.split(":")
-        if (partes.size != 4 || partes[1] != ProtocoloEmparejamiento.VERSION) {
+        val esV1 = partes.size == 4 && partes[1] == ProtocoloEmparejamiento.VERSION_1
+        val esV2 = partes.size == 5 && partes[1] == ProtocoloEmparejamiento.VERSION_2
+        if (!esV1 && !esV2) {
             return "AUTH_FAIL:version de protocolo no soportada\n"
         }
         val certificado = BodycamIdentity.certificado()
             ?: return "AUTH_FAIL:esta bodycam no esta dada de alta (workflow 13)\n"
 
+        version = partes[1]
         deviceId = partes[2]
         nonceDelTelefono = decodificar(partes[3]) ?: return "AUTH_FAIL:nonce ilegible\n"
+        if (esV2) {
+            AcuerdoDeClaves.leer(partes[4]) ?: return "AUTH_FAIL:clave efimera ilegible\n"
+            efimeraDelTelefono = partes[4]
+            efimeraPropia = AcuerdoDeClaves.parEfimero()
+        } else {
+            Log.w(TAG, "telefono con emparejamiento v1: se autentica pero el canal NO se cifra")
+        }
 
-        return listOf(
+        return (listOf(
             "AUTH_ID",
             BodycamIdentity.bwcId(context),
             Base64.getEncoder().encodeToString(nonce),
             Base64.getEncoder().encodeToString(certificado.encoded),
-        ).joinToString(":") + "\n"
+        ) + listOfNotNull(efimeraPropia?.let { AcuerdoDeClaves.codificar(it.public) })).joinToString(":") + "\n"
     }
 
     /**
@@ -147,12 +190,16 @@ class EmparejamientoDeLaBodycam(private val context: Context) {
             return "AUTH_FAIL:el certificado del telefono no lo emitio AeriaOne\n"
         }
 
+        val efimeraNuestra = efimeraPropia?.let { AcuerdoDeClaves.codificar(it.public) }
         val delTelefono = ProtocoloEmparejamiento.transcripcion(
+            version = version,
             rol = ProtocoloEmparejamiento.Rol.TELEFONO,
             deviceId = identificador,
             bwcId = BodycamIdentity.bwcId(context),
             nonceDelTelefono = nonceA,
             nonceDeLaBodycam = nonce,
+            efimeraDelTelefono = efimeraDelTelefono,
+            efimeraDeLaBodycam = efimeraNuestra,
         )
         if (!verificar(firma, delTelefono, certificadoDelTelefono)) {
             Log.w(TAG, "el telefono no pudo demostrar su clave")
@@ -164,12 +211,28 @@ class EmparejamientoDeLaBodycam(private val context: Context) {
         Log.i(TAG, "telefono $identificador autenticado")
 
         val nuestra = ProtocoloEmparejamiento.transcripcion(
+            version = version,
             rol = ProtocoloEmparejamiento.Rol.BODYCAM,
             deviceId = identificador,
             bwcId = BodycamIdentity.bwcId(context),
             nonceDelTelefono = nonceA,
             nonceDeLaBodycam = nonce,
+            efimeraDelTelefono = efimeraDelTelefono,
+            efimeraDeLaBodycam = efimeraNuestra,
         )
+        val par = efimeraPropia
+        val suya = efimeraDelTelefono?.let(AcuerdoDeClaves::leer)
+        if (par != null && suya != null) {
+            canalAcordado = CanalCifrado.derivar(
+                secreto = AcuerdoDeClaves.secreto(par.private, suya),
+                nonceDelTelefono = nonceA,
+                nonceDeLaBodycam = nonce,
+                soyTelefono = false,
+            )
+            // La privada efimera ya no hace falta: sin ella no se pueden rehacer
+            // las claves de esta conexion.
+            efimeraPropia = null
+        }
         return "AUTH_OK:" + Base64.getEncoder().encodeToString(BodycamIdentity.firmar(nuestra)) + "\n"
     }
 

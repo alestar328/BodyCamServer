@@ -71,7 +71,7 @@ object IncidentAssembler {
         // primer segmento se llama igual que el resultado final, por eso se
         // borra antes de renombrar.
         segments.forEach { it.delete() }
-        val final = File(EvidenceStore.incidentDir(incidentId), EvidenceStore.evidenceName(startMillis))
+        val final = File(EvidenceStore.incidentDir(incidentId), EvidenceStore.evidenceName(incidentId, startMillis))
         return if (work.renameTo(final)) {
             Log.d(TAG, "$incidentId ensamblado: ${final.name} (${final.length() / 1_048_576} MB)")
             final

@@ -88,8 +88,17 @@ class BindingAgente(private val context: Context) {
             return "BIND_FAIL:la atadura no corresponde a esta sesion\n"
         }
 
-        val caduca = json.optLong("expires_at", 0L)
-        if (caduca <= System.currentTimeMillis()) return "BIND_FAIL:la atadura ya venia caducada\n"
+        // La vigencia se cuenta con el reloj de la camara, no con la hora del telefono:
+        // la W1 ha ido 6 h desfasada, y comparar su reloj con un `expires_at` ajeno
+        // recortaba la atadura o la rechazaba entera. Se toma la DURACION que firmo el
+        // agente (las dos horas son del mismo reloj, el del telefono) y se empieza a
+        // contar ahora. Que no sea una declaracion vieja ya lo garantiza el nonce de
+        // esta sesion, no el reloj.
+        val emitida = json.optLong("issued_at", 0L)
+        val duracion = json.optLong("expires_at", 0L) - emitida
+        if (emitida <= 0L || duracion <= 0L) return "BIND_FAIL:la atadura no tiene vigencia\n"
+        if (duracion > VIGENCIA_MAXIMA_MILLIS) return "BIND_FAIL:la atadura dura mas de un turno\n"
+        val caduca = System.currentTimeMillis() + duracion
 
         // Que el nombre comun del certificado sea el agente que dice ser. Sin esto,
         // cualquier agente con certificado valido podria atar la camara a nombre
@@ -105,6 +114,19 @@ class BindingAgente(private val context: Context) {
             deviceId = json.optString("device_id"),
             caducaEn = caduca,
         )
+        // Lo que se rotula sale de la declaracion firmada, no de otro mensaje: asi la
+        // camara no pone en el video un nombre que el agente no haya firmado. Un
+        // telefono anterior no manda estos campos, y entonces se rotula el user_id.
+        AgenteDeServicio.atar(
+            Officer(
+                name = json.optString("officer_name").ifBlank { declarado },
+                rank = json.optString("officer_rank").ifBlank { "-" },
+                badge = json.optString("officer_badge").ifBlank { declarado.substringBefore('.') },
+                userId = declarado,
+            ),
+            caducaEnMillis = caduca,
+        )
+        EvidenceStore.completarOficial(AgenteDeServicio.oficial())
         Log.i(TAG, "camara al servicio de $declarado hasta $caduca")
         return "BIND_OK:${BodycamIdentity.bwcId(context)}\n"
     }
@@ -135,6 +157,7 @@ class BindingAgente(private val context: Context) {
         }
 
         enVigor = null
+        AgenteDeServicio.soltar()
         Log.i(TAG, "atadura deshecha: ${json.optString("reason")}")
         return "UNBIND_OK\n"
     }
@@ -191,4 +214,9 @@ class BindingAgente(private val context: Context) {
 
     private fun decodificar(texto: String): ByteArray? =
         runCatching { Base64.getDecoder().decode(texto) }.getOrNull()
+
+    private companion object {
+        /** La que firma el telefono (BindingPeriferico.VALIDEZ_POR_DEFECTO_MILLIS). */
+        const val VIGENCIA_MAXIMA_MILLIS = 12L * 60 * 60 * 1000
+    }
 }

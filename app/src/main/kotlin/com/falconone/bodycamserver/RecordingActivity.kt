@@ -789,6 +789,8 @@ class RecordingActivity : ComponentActivity() {
 
         val now = System.currentTimeMillis()
         val id = EvidenceStore.newIncidentId()
+        // Antes de promover: los segmentos del pre-roll toman ya la placa del agente.
+        EvidenceStore.guardarOficial(id, AgenteDeServicio.oficial())
 
         // Congelar el anillo antes de promover: desde este cambio de estado
         // onSegmentSealed deja de recortar y empieza a adoptar.

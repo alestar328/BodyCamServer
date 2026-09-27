@@ -38,6 +38,19 @@ private const val TAG = "FalconServer"
 private const val NOTIF_CHANNEL = "falcon_bt_server"
 private const val NOTIF_ID = 1
 
+/**
+ * Modo transicion del workflow 31, decidido por el usuario el 2026-09-28.
+ *
+ * `false`: un telefono que no se empareja por v2 sigue pudiendo mandar comandos en
+ * claro, como hasta ahora; lo que no puede es prestar el token. Hace falta mientras
+ * las anclas de la W1 sean las de la CA de pruebas y el backend firme los telefonos
+ * con las suyas: con `true`, ningun telefono dado de alta contra el backend podria
+ * manejar la camara.
+ *
+ * `true` cuando se alineen las anclas: sin canal cifrado solo se atiende AUTH_*.
+ */
+private const val EXIGIR_CANAL_CIFRADO = false
+
 class BtServerService : Service() {
 
     companion object {
@@ -57,6 +70,13 @@ class BtServerService : Service() {
 
     /** Intercambio del workflow 31 de la conexion en curso. Null si no hay cliente. */
     private var emparejamiento: EmparejamientoDeLaBodycam? = null
+
+    /**
+     * Canal cifrado de la conexion en curso (emparejamiento v2). Null mientras no
+     * se haya acordado, con un telefono v1 o sin cliente. Con el puesto, todo lo que
+     * entra y sale va cifrado y una linea en claro se rechaza.
+     */
+    @Volatile private var canal: CanalCifrado? = null
 
     /** A quien sirve la camara en esta conexion (workflows 33 y 34). */
     private var binding: BindingAgente? = null
@@ -379,8 +399,16 @@ class BtServerService : Service() {
         try {
             var line: String?
             while (reader.readLine().also { line = it } != null) {
-                val response = processCommand(line!!.trim())
-                send(response)
+                val recibida = line!!.trim()
+                if (recibida.isEmpty()) continue
+                val comando = abrir(recibida) ?: break   // null: manipulacion, se corta
+                if (comando.isEmpty()) continue           // rechazada, ya contestada
+                val response = processCommand(comando)
+                // AUTH_OK sale en claro y el canal se activa justo detras: el
+                // telefono no tiene las claves hasta haber comprobado esa linea.
+                val acordado = emparejamiento?.canalAcordado
+                if (acordado != null && canal == null) enviarYCifrar(response, acordado)
+                else send(response)
             }
         } catch (_: IOException) {
             // Client disconnected. Do NOT stop an active recording: BT drops are
@@ -392,10 +420,12 @@ class BtServerService : Service() {
             }
         } finally {
             connectedClient = null
+            canal = null
             emparejamiento = null
             // La atadura no sobrevive al enlace: mientras no hay telefono, la
             // camara no esta al servicio de nadie.
             binding = null
+            AgenteDeServicio.soltar()
             closeClient()
             // Sin teléfono nadie mira el visor: se libera la cámara para no
             // drenar batería. Si el enlace vuelve, el teléfono lo reabre.
@@ -405,11 +435,44 @@ class BtServerService : Service() {
         }
     }
 
+    /**
+     * La linea tal y como la entiende [processCommand].
+     *
+     * @return el comando en claro; "" si se rechaza (ya se ha contestado); null si
+     *   hay que cortar la conexion: una trama que no descifra es manipulacion o un
+     *   contador desincronizado, y en los dos casos el canal ya no es de fiar.
+     */
+    private fun abrir(linea: String): String? {
+        val activo = canal
+        if (activo != null) {
+            if (!linea.startsWith(CanalCifrado.PREFIJO)) {
+                Log.w(TAG, "linea en claro con el canal cifrado: rechazada")
+                send(Rsp.error("Canal cifrado: linea en claro rechazada"))
+                return ""
+            }
+            val claro = activo.descifrar(linea)
+            if (claro == null) Log.e(TAG, "trama que no descifra: se corta la conexion")
+            return claro
+        }
+        if (linea.startsWith(CanalCifrado.PREFIJO)) {
+            send(Rsp.error("Trama cifrada sin canal acordado"))
+            return ""
+        }
+        if (EXIGIR_CANAL_CIFRADO && !linea.startsWith("AUTH_")) {
+            Log.w(TAG, "comando en claro de un telefono sin canal cifrado: rechazado")
+            send(Rsp.error("Telefono no acreditado: empareja antes de mandar comandos"))
+            return ""
+        }
+        return linea
+    }
+
     private fun processCommand(raw: String): String {
         // El emparejamiento se atiende antes de registrar nada: la linea lleva
         // certificados en base64 y llenaria el log de ruido en cada conexion.
         if (raw.startsWith("AUTH_")) return procesarEmparejamiento(raw)
         if (raw.startsWith("BIND") || raw.startsWith("UNBIND")) return procesarAtadura(raw)
+        // Antes del log: la línea lleva una credencial.
+        if (raw.startsWith("TOKEN")) return procesarToken(raw)
 
         Log.d(TAG, "CMD: $raw")
         val parts = raw.split(":")
@@ -576,13 +639,15 @@ class BtServerService : Service() {
      * de Aeria Nexus que no conocen el intercambio, y cortarles el enlace los
      * dejaria sin camara sin haber ganado nada. Se registra y se sigue.
      *
-     * En cuanto todos los terminales lleven la version nueva, esto se invierte:
-     * un cliente que no se acredite no debe poder mandar REC_STOP ni STATUS.
-     * El sitio para ese cambio es processCommand, comprobando
-     * `emparejamiento?.telefonoAutenticado` antes del `when`.
+     * En cuanto todos los terminales lleven la version nueva y las anclas esten
+     * alineadas, esto se invierte con [EXIGIR_CANAL_CIFRADO]: sin canal cifrado,
+     * un cliente no puede mandar ni REC_STOP ni STATUS (ver [abrir]).
      */
     private fun procesarEmparejamiento(raw: String): String {
         val enCurso = emparejamiento ?: return Rsp.error("Emparejamiento fuera de conexion")
+        // Un segundo intercambio dentro de un canal ya acordado no aporta nada y
+        // reutilizaria el nonce de esta conexion: se empareja al reconectar.
+        if (canal != null) return Rsp.error("Ya emparejado en esta conexion")
         return when {
             raw.startsWith("AUTH_HELLO") -> enCurso.responderASaludo(raw)
             raw.startsWith("AUTH_PROOF") ->
@@ -614,14 +679,67 @@ class BtServerService : Service() {
         }
     }
 
+    /**
+     * Token de la sesión del agente que presta el teléfono, para subir la evidencia:
+     * `TOKEN:<jwt>:<segundos de vida>` o `TOKEN_CLEAR` al cerrarse la sesión.
+     *
+     * Solo de un teléfono acreditado, por lo mismo que la atadura: si no, cualquiera
+     * que conozca el UUID podría hacer que la unidad suba con una credencial suya.
+     * Sobrevive a la caída del enlace a propósito: una subida de un vídeo largo no
+     * debe pararse por un micro-corte del Bluetooth.
+     */
+    private fun procesarToken(raw: String): String {
+        if (emparejamiento?.telefonoAutenticado == null) {
+            return "TOKEN_FAIL:el telefono no se ha acreditado\n"
+        }
+        // La credencial no viaja en claro: un telefono v1 se acredita pero no
+        // cifra, y el token es lo unico de este protocolo que vale fuera de el.
+        if (canal == null) {
+            return "TOKEN_FAIL:hace falta el canal cifrado (emparejamiento v2)\n"
+        }
+        if (raw == "TOKEN_CLEAR") {
+            UploadConfig.retirarToken()
+            Log.i(TAG, "token de la sesión retirado")
+            return "TOKEN_OK\n"
+        }
+        val partes = raw.removePrefix("TOKEN:").split(":")
+        val token = partes.getOrNull(0)
+        val segundos = partes.getOrNull(1)?.toLongOrNull()
+        if (token.isNullOrBlank() || segundos == null) return "TOKEN_FAIL:formato\n"
+        if (segundos <= 0) return "TOKEN_FAIL:caducado\n"
+
+        UploadConfig.prestarToken(token, segundos)
+        Log.i(TAG, "token de la sesión recibido, vale ${segundos / 60} min")
+        // Lo que esperaba credencial sale ahora, sin esperar al siguiente arranque.
+        UploadService.resumePending(applicationContext)
+        return "TOKEN_OK\n"
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     // Synchronized: command responses (handleClient thread) and BTN_* notifications
     // (side-key executor threads) write to the same stream; without this their
     // bytes can interleave inside a single line and corrupt the protocol.
+    //
+    // Con el canal cifrado puesto, cada linea sale como una trama `S:` propia; el
+    // contador del canal avanza aqui dentro, bajo el mismo cerrojo.
     @Synchronized
     private fun send(data: String) {
-        try { output?.write(data.toByteArray(Charsets.UTF_8)) } catch (_: IOException) {}
+        val activo = canal
+        val salida = if (activo == null) data
+                     else data.split('\n').filter { it.isNotEmpty() }.joinToString("") { activo.cifrar(it) + "\n" }
+        try { output?.write(salida.toByteArray(Charsets.UTF_8)) } catch (_: IOException) {}
+    }
+
+    /**
+     * `AUTH_OK` en claro y el canal activo a partir del byte siguiente, sin que
+     * quepa en medio un BTN_* de otro hilo: el mismo cerrojo que [send].
+     */
+    @Synchronized
+    private fun enviarYCifrar(data: String, nuevo: CanalCifrado) {
+        send(data)
+        canal = nuevo
+        Log.i(TAG, "canal cifrado activo con ${emparejamiento?.telefonoAutenticado}")
     }
 
     private fun closeClient() {
