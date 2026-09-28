@@ -1,5 +1,6 @@
 package com.falconone.bodycamserver
 
+import android.Manifest
 import android.app.Activity
 import android.app.ActivityManager
 import android.app.admin.DevicePolicyManager
@@ -168,6 +169,16 @@ object DeviceOwner {
         // siquiera un device owner puede encender un servicio de accesibilidad.
         runCatching { dpm.setPermittedAccessibilityServices(admin, listOf(paquete)) }
             .onFailure { Log.e(TAG, "No se pudo restringir la accesibilidad", it) }
+
+        // El serial es de donde sale el BWC-xxxx de la unidad (BodycamIdentity.bwcId)
+        // y en Android 9 leerlo pide este permiso. Sin kiosco lo concede el guion de
+        // alta por adb; aqui la unidad se lo da sola y nadie tiene que aceptar nada.
+        runCatching {
+            dpm.setPermissionGrantState(
+                admin, paquete, Manifest.permission.READ_PHONE_STATE,
+                DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
+            )
+        }.onFailure { Log.e(TAG, "No se pudo conceder el permiso para leer el serial", it) }
 
         esconderAppsDelFabricante(dpm, admin, context)
 

@@ -1,5 +1,6 @@
 package com.falconone.bodycamserver
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
@@ -8,6 +9,7 @@ import android.util.Log
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.SecureRandom
 import java.security.Signature
@@ -56,23 +58,77 @@ object BodycamIdentity {
     private const val FICHERO_ANCLA = "ca.pem"
     private const val FICHERO_ANCLA_USUARIO = "user-ca.pem"
 
+    // Seriales que traen aparatos sin serial propio: derivar de ellos daria el mismo
+    // BWC a todas las unidades.
+    private val SERIALES_GENERICOS = setOf("UNKNOWN", "0123456789ABCDEF", "0123456789")
+
     private val keystore: KeyStore
         get() = KeyStore.getInstance(PROVEEDOR).apply { load(null) }
 
     fun existe(): Boolean = runCatching { keystore.containsAlias(ALIAS) }.getOrDefault(false)
 
+    // Ya derivado del serial en este proceso: no hace falta volver a leerlo.
+    @Volatile private var bwcDelSerial: String? = null
+
     /**
-     * Identificador de la camara. Lo emite el registro de dispositivos de
-     * AeriaOne; que se lo invente esta funcion es exactamente lo que el backend
-     * vendra a corregir, igual que en el alta del telefono.
+     * Identificador de la camara: `BWC-` + las 4 primeras cifras hex del SHA-256
+     * del serial del aparato (`ro.serialno`). Decidido el 2026-09-29.
+     *
+     * Hasta entonces era aleatorio y vivia en las preferencias: desinstalar la app
+     * o borrar sus datos cambiaba el id y dejaba la credencial del IAM huerfana.
+     * Derivado del serial, una reinstalacion vuelve al mismo BWC. Lo que NO arregla
+     * es el choque entre dos unidades (sigue siendo de 16 bits, ~0,7 % con 30):
+     * eso lo detecta el alta (409) y `tools/alta-bodycam-iam.sh` antes de mandar
+     * nada. Alargarlo cambiaria el uid de Agora en las dos apps.
+     *
+     * Leer el serial en Android 9 pide READ_PHONE_STATE: el device owner se lo da
+     * solo ([DeviceOwner.aplicarPoliticas]) y el guion de alta lo concede por adb.
+     * Sin el permiso se sigue con el id guardado, o uno aleatorio si no hay.
+     *
+     * Un id ya guardado solo se sustituye por el del serial si la unidad no tiene
+     * aun un certificado emitido a su nombre: cambiarlo despues del alta dejaria
+     * la credencial del backend apuntando a un id que ya no existe.
      */
     fun bwcId(context: Context): String {
+        bwcDelSerial?.let { return it }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.getString(CLAVE_BWC_ID, null)?.let { return it }
-        val sufijo = ByteArray(2).also { SecureRandom().nextBytes(it) }
-            .joinToString("") { "%02X".format(it) }
-        return "BWC-$sufijo".also { prefs.edit().putString(CLAVE_BWC_ID, it).apply() }
+        val guardado = prefs.getString(CLAVE_BWC_ID, null)
+        val delSerial = idDesdeSerial()
+
+        if (delSerial == null) {
+            guardado?.let { return it }
+            Log.w(TAG, "Sin serial legible: identidad aleatoria hasta que lo haya")
+            val sufijo = ByteArray(2).also { SecureRandom().nextBytes(it) }
+                .joinToString("") { "%02X".format(it) }
+            return "BWC-$sufijo".also { prefs.edit().putString(CLAVE_BWC_ID, it).apply() }
+        }
+
+        if (guardado != null && guardado != delSerial) {
+            if (tieneCertificadoEmitido()) {
+                Log.w(TAG, "El serial da $delSerial, pero ya hay certificado para $guardado: se mantiene")
+                return guardado
+            }
+            Log.i(TAG, "Identidad $guardado sustituida por la del serial: $delSerial")
+        }
+        if (guardado != delSerial) prefs.edit().putString(CLAVE_BWC_ID, delSerial).apply()
+        bwcDelSerial = delSerial
+        return delSerial
     }
+
+    /** `BWC-XXXX` sacado del serial, o null si no se puede leer o es el generico. */
+    @SuppressLint("MissingPermission", "HardwareIds")
+    private fun idDesdeSerial(): String? {
+        val serial = runCatching { Build.getSerial() }.getOrNull()?.trim()?.uppercase()
+        if (serial.isNullOrEmpty() || serial in SERIALES_GENERICOS || serial.all { it == serial[0] }) {
+            return null
+        }
+        val resumen = MessageDigest.getInstance("SHA-256").digest(serial.toByteArray(Charsets.US_ASCII))
+        return "BWC-" + "%02X%02X".format(resumen[0], resumen[1])
+    }
+
+    /** El certificado del Keystore ya no es el autofirmado: lo emitio una CA. */
+    private fun tieneCertificadoEmitido(): Boolean =
+        certificado()?.let { it.issuerX500Principal != it.subjectX500Principal } ?: false
 
     /**
      * Numero con el que la unidad entra en el canal de Agora, sacado de su

@@ -25,3 +25,6 @@ tools/dev-keys/
 # Keystore de firma: vive fuera del repo (ver local.properties). Por si acaso.
 *.jks
 *.keystore
+
+# Registro local de altas contra el IAM (tools/alta-bodycam-iam.sh)
+tools/altas-iam/

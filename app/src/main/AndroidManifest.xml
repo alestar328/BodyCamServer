@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Solo para leer el serial (Build.getSerial), del que sale el BWC-xxxx:
+         ver BodycamIdentity.bwcId. La unidad no tiene SIM ni hace llamadas. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!-- Service persistence -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

@@ -186,8 +186,16 @@ class UploadService : IntentService("FalconUploadService") {
         }
 
         val oficial = EvidenceStore.oficialDe(incidentId)
+        val unidad = BodycamIdentity.bwcId(this)
         val base = mutableMapOf(
-            "incident_id" to incidentId,
+            // Con la unidad delante. El backend junta las piezas de un incidente por
+            // (dispositivo de la sesion, incident_id), y el dispositivo de la sesion
+            // es el TELEFONO que presta el token, no esta camara. INC_000005 es una
+            // secuencia de cada unidad: un agente que use la X un dia y la Y otro
+            // tendria dos INC_000005 fusionados en el mismo incidente. En disco y en
+            // el telefono (UPLOADS) el id sigue siendo el corto.
+            "incident_id" to "$unidad/$incidentId",
+            "unit_id" to unidad,
             "officer_code" to oficial.badge,
             "officer_name" to oficial.name,
             "device_id" to (Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)

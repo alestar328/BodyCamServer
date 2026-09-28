@@ -10,6 +10,45 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
 
 ---
 
+## 2026-09-29 — El BWC sale del serial; contestar al SOS por voz
+
+### BWC derivado del serial (decidido por el usuario, antes del alta en el IAM)
+
+- **`BodycamIdentity.bwcId`**: `BWC-` + 4 cifras hex del SHA-256 de `Build.getSerial()`.
+  La W1 conocida (serial `30393016471440`) pasará a ser **`BWC-7D6F`**, uid de Agora
+  **42111** (antes `BWC-896E` / 45182, aleatorio).
+  - Qué arregla: reinstalar o borrar datos ya **no cambia el id** ni deja la credencial
+    del IAM huérfana.
+  - Qué NO arregla: el choque entre unidades sigue siendo de 16 bits (~0,7 % con 30).
+    Alargarlo cambiaría el uid de Agora en las dos apps; se descartó.
+  - Seriales genéricos (`unknown`, `0123456789ABCDEF`, todo el mismo carácter) o sin
+    permiso: se sigue con el id guardado, o uno aleatorio si no hay ninguno.
+  - Un id guardado solo se cambia por el del serial si **no hay certificado emitido**
+    (emisor ≠ sujeto en el Keystore). Tras el alta, el id no se mueve.
+- **`READ_PHONE_STATE`** en el manifiesto (solo para el serial). El device owner se lo
+  concede solo en `aplicarPoliticas`; sin kiosco lo concede el guion.
+- **`tools/alta-bodycam-iam.sh`**: concede el permiso y reinicia la app antes del CSR,
+  y **para el alta si el BWC ya lo tiene otra unidad** de la tanda o del registro.
+- El formato `BWC-XXXX` y la regla del uid no cambian: el móvil no tiene que tocar nada.
+- Compila (`compileDebugKotlin`). **Sin probar en la W1**: no había ninguna conectada.
+  Comprobar en la unidad que `Build.getSerial()` devuelve lo mismo que el serial de adb.
+
+### Contestar al SOS: voz por PTT en el directo (decidido por el usuario)
+
+Pregunta: el agente A emite SOS (vídeo + micro) y los demás le ven y le oyen, pero no
+pueden contestarle. **Es posible y casi todo existe ya:**
+- Todos los teléfonos están en el canal como broadcaster; el PTT del móvil publica el
+  micro y anuncia `ptt_on`, y quien lo recibe (también el emisor del SOS) abre ese audio.
+- La W1 escucha todo el canal siempre (`autoSubscribeAudio = true`, verificado el 15-sep).
+- **Falta en el móvil:** el PTT solo está en Operations y se corta al salir de ella
+  (`onDispose`); en la pantalla del directo del SOS no hay forma de hablar.
+
+Encargado a la sesión AN (botón PTT de mantener en el directo, quién habla, audio en el
+emisor). **Tarea BC:** probar en la W1 que durante su SOS, con micro abierto y altavoz,
+la voz entrante no se acople.
+
+---
+
 ## 2026-09-29 (PLAN) — Reparto del día: dos sesiones en paralelo, workflows sin backend
 
 Escrito el 28-sep por la noche. **El mismo texto está en el DEVLOG de los dos repos.**
@@ -49,7 +88,8 @@ repetir el alta o por adb. La sesión AN avisa cuando esté.
 
 ### Sesión BC — BodyCamServer (dueña del adb de la W1)
 
-1. **Alta de la W1 contra el IAM (opción B)** y prueba de punta a punta con el teléfono:
+1. **Alta de la W1 contra el IAM (opción B)** con `tools/alta-bodycam-iam.sh` (hecho el
+   28-sep, sin probar; ver la entrada 2026-09-28 (2)) y prueba de punta a punta con el teléfono:
    emparejamiento v2 y canal cifrado (wf 31), atadura con nombre real (33/34), token
    prestado y subida al backend (40). Coordinar con la sesión AN el turno del teléfono.
    Si todo sale, proponer al usuario `EXIGIR_CANAL_CIFRADO = true`.
@@ -89,6 +129,64 @@ repetir el alta o por adb. La sesión AN avisa cuando esté.
 - La W1 por adb es de una sesión a la vez: la BC. Las pruebas en aparatos van por turnos.
 - Al cerrar: agente `coherencia-bodycam-movil` (ocho puntos), DEVLOG de cada repo y horas
   al libro del manager (filas libres 57-65, una fila por app y bloque).
+
+---
+
+## 2026-09-28 (2) — Alta de las W1 contra el IAM (opción B) y lo que rompía con varias unidades
+
+### Por qué
+
+El usuario eligió la opción B de las anclas: que las W1 pidan su certificado al mismo
+backend que los teléfonos. Y pidió tener en cuenta que en pruebas habrá **varias bodycams,
+varios agentes y varios teléfonos** a la vez.
+
+### Hecho
+
+- **`tools/alta-bodycam-iam.sh`**. Sin seriales, da de alta todas las bodycams conectadas.
+  Por unidad: la W1 deja su CSR (sin regenerar la clave si ya existe), el CSR va a
+  `POST /api/iam/devices/enroll` como `device_kind=bodycam`, y el certificado y las **dos
+  anclas del tenant** vuelven a la unidad, que comprueba la posesión de la clave.
+  - Es **idempotente**: una unidad cuya ancla ya es la del backend se salta.
+  - Distingue el 409 (ese BWC ya está dado de alta) y el 401 (falta `IAM_ENROLLMENT_TOKEN`).
+  - `--telefonos S1,S2` instala el ancla del backend en teléfonos ya dados de alta, como
+    el Samsung.
+  - Deja un registro serial ↔ BWC en `tools/altas-iam/`, que no va a git.
+- **Los incidentes llevan la unidad en la subida: `incident_id = BWC-896E/INC_000038`**
+  y `unit_id` nuevo.
+  - Por qué: el backend junta las piezas por (dispositivo de la sesión, `incident_id`), y
+    el dispositivo de la sesión es el **teléfono** que presta el token. Con varias unidades
+    en rotación, el `INC_000005` de dos bodycams usadas por el mismo agente se fusionaba
+    en un solo incidente.
+  - En disco, en UPLOADS y en el teléfono el id sigue siendo el corto.
+  - Documentado en `docs/UPLOAD-PROTOCOL.md`. No hace falta tocar el backend.
+
+### Revisado para varias unidades, y ya correcto
+
+- **Uid de Agora:** uno por unidad (14-sep).
+- **Qué bodycam usa cada teléfono:** la elige el teléfono por MAC (14-sep).
+- **Clientes Bluetooth:** la W1 atiende uno a la vez.
+- **A quién sirve la cámara:** a quien la ata con su firma, y la atadura muere al caer el
+  enlace.
+- **Confianza entre aparatos:** con la opción B todos los teléfonos y bodycams del tenant se
+  fían entre sí; a quién sirve cada cámara lo decide la atadura.
+
+### Pendiente y riesgos
+
+- **Sin probar**: no había ninguna W1 conectada ni el backend levantado. Probado sin aparato:
+  la sintaxis del guion, la lectura del CSR, el JSON de la petición y de la respuesta, y
+  las rutas en Git Bash (se corrigió un fallo: python, openssl y curl no entendían `/tmp/...`).
+- **El `BWC-xxxx` es aleatorio de 16 bits** (`BodycamIdentity.bwcId`), no sale del serial
+  como cree el backend.
+  - Con 20 unidades, la probabilidad de que dos coincidan es del 0,3 %. El alta lo detecta
+    (409), pero no lo arregla.
+  - Desinstalar la app (o borrar sus datos) cambia el BWC y deja la credencial vieja
+    huérfana en el backend.
+  - `install -r` no le afecta.
+- **Las órdenes de alta por adb solo existen en APK de depuración.** Si las pruebas van con
+  release, hay que dar otra vía.
+- **Cada W1 necesita su `upload.conf`** apuntando al backend. Hoy se pone a mano por adb.
+- La tarea **AN-0** del teléfono sigue haciendo falta para los teléfonos que se den de alta
+  a partir de ahora.
 
 ---
 

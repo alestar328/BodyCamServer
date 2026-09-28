@@ -189,7 +189,8 @@ Sent on create, same for both apps.
 | `kind` | `evidence` \| `manifest` \| `proxy` | Up to three uploads per incident, see §6 |
 | `proxy_of` | 64 hex | `kind=proxy` only: `sha256_plain` of the original |
 | `proxy_short_side` / `proxy_fps` | `720` / `15` | `kind=proxy` only |
-| `incident_id` | `INC_000009` | Monotonic per device, gaps are meaningful |
+| `incident_id` | `BWC-896E/INC_000009` | Bodycam: `<unit>/<sequence>` since 2026-09-28. The sequence is monotonic **per unit** and gaps are meaningful. The unit prefix is required because the bodycam uploads with the token of the agent's phone, so the session device is the phone: without it, `INC_000009` from two units used by the same agent would be grouped into one incident. Phone: a UUID |
+| `unit_id` | `BWC-896E` | Bodycam only: the unit that recorded, whoever's token it uploads with |
 | `filename` | `36975_20260826_1731.mp4.fev` | Officer badge, date, time |
 | `sha256_cipher` | 64 hex | Of the uploaded bytes — what §4 verifies |
 | `sha256_plain` | 64 hex | Of the original MP4, for chain of custody. Empty for manifests |
