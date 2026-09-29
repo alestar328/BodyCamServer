@@ -33,11 +33,34 @@ object VisibilidadBluetooth {
     // quedaba visible indefinidamente (medido el 2026-09-14: seguia visible a los 8 min).
     private val ocultar = Runnable { cambiarModo(BluetoothAdapter.SCAN_MODE_CONNECTABLE) }
 
+    /**
+     * Etapa de pruebas (decidido el 2026-09-29): la unidad visible SIEMPRE. Las W1 rotan
+     * entre agentes y un telefono que no la conoce solo la encontraba en los 5 min tras
+     * arrancar. Se paga el riesgo de seguimiento que el limite evitaba; en produccion va
+     * a false, y la via prevista es que el telefono lea la MAC de una pegatina QR.
+     */
+    private const val SIEMPRE_VISIBLE = true
+
+    // Se reafirma cada poco porque apagar y encender el Bluetooth devuelve la unidad a
+    // solo conectable, y nadie la volvería a poner visible hasta reiniciar la app.
+    private val reafirmar = object : Runnable {
+        override fun run() {
+            cambiarModo(BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE)
+            handler.postDelayed(this, (SEGUNDOS_VISIBLE - 60) * 1000L)
+        }
+    }
+
     /** Devuelve false si el sistema no lo permite; la unidad sigue siendo conectable. */
     fun hacerVisible(): Boolean {
         handler.removeCallbacks(ocultar)
+        handler.removeCallbacks(reafirmar)
         val aceptado = cambiarModo(BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE)
-        if (aceptado) handler.postDelayed(ocultar, SEGUNDOS_VISIBLE * 1000L)
+        if (SIEMPRE_VISIBLE) {
+            // También si ahora falló (Bluetooth apagado): el siguiente intento la pone.
+            handler.postDelayed(reafirmar, (SEGUNDOS_VISIBLE - 60) * 1000L)
+        } else if (aceptado) {
+            handler.postDelayed(ocultar, SEGUNDOS_VISIBLE * 1000L)
+        }
         return aceptado
     }
 

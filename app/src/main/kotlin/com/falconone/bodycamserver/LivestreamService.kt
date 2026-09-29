@@ -59,6 +59,20 @@ object LivestreamService {
     /** Hay un SOS pedido, en el aire o esperando al canal. Lo que miran los botones para cortarlo. */
     val sosActivo get() = sosPedido
 
+    /** El PTT estaba abierto al entrar en SOS: al salir se deja como estaba. */
+    @Volatile private var micAntesDelSos = false
+
+    /** Cuándo acaba de sonar el tono de SOS: el micro no se abre antes. */
+    @Volatile private var tonoSosAcabaEn = 0L
+
+    /**
+     * Doble F2 durante el SOS: lo que llega del canal deja de sonar en la unidad. Solo
+     * el volumen de reproducción local, sin desuscribirse, así que la grabación en la
+     * nube no pierde nada y lo que publica la unidad no cambia.
+     */
+    @Volatile var entranteSilenciado = false
+        private set
+
     /** El anillo estaba armado cuando el PTT le quitó el micro; hay que rearmarlo. */
     @Volatile private var pttResumeService = false
 
@@ -75,6 +89,13 @@ object LivestreamService {
      * peor que uno que no abre, porque el agente cree que le están oyendo.
      */
     @Volatile var onPttDropped: ((String) -> Unit)? = null
+
+    /**
+     * El micro que abre el SOS está capturando de verdad. BtServerService manda
+     * BTN_PTT_ON: en el móvil "ptt" es el estado del micro, lo abra el PTT o el SOS,
+     * y sin el ON el primer F2 del SOS mandaría un OFF sin su ON.
+     */
+    @Volatile var onMicDelSosAbierto: (() -> Unit)? = null
 
     /**
      * Tocar el engine desde un callback del SDK lo bloquea, así que el cierre de
@@ -310,6 +331,12 @@ object LivestreamService {
         if (engine == null) escuchar(context)
         if (engine == null) return false
 
+        // Aquí pasan el botón SOS, STREAM_START del móvil y los dos paneles. El micro
+        // del SOS se abre cuando el tono acaba, así que el pitido no viaja al directo
+        // salvo que el agente ya tuviera el PTT abierto (aceptado el 2026-09-29).
+        micAntesDelSos = _micEnabled
+        tonoSosAcabaEn = System.currentTimeMillis() + TonoSos.sonar(context)
+
         // Si el PTT ya había cortado el anillo, yieldCamera no lo verá y perdería la
         // intención de rearmarlo. El SOS la hereda: a partir de aquí es él quien
         // devuelve el pre-roll al terminar.
@@ -346,9 +373,20 @@ object LivestreamService {
                     VideoEncoderConfiguration.ORIENTATION_MODE.ORIENTATION_MODE_ADAPTIVE
                 )
             )
-            // El micro no: lo abre el PTT (botón F2), no el livestream.
+            // Desde el 2026-09-29 el SOS publica también el micro, como el teléfono.
+            // F2 suelto lo cierra y lo abre mientras dura; el vídeo sale siempre.
             isStreaming = true
+            val abrirMicroDelSos = !_micEnabled
+            if (abrirMicroDelSos) {
+                val falta = tonoSosAcabaEn - System.currentTimeMillis()
+                if (falta > 0) Thread.sleep(falta)
+                _micEnabled = true
+            }
             aplicarPublicacion(eng)
+            if (abrirMicroDelSos) {
+                eng.enableLocalAudio(true)
+                vigilarCaptura(alConfirmar = { onMicDelSosAbierto?.invoke() })
+            }
             Log.d(TAG, "SOS en el aire (micro abierto: $_micEnabled)")
             // Amarillo parpadeando = emitiendo (SOS). El azul fijo pasó a
             // significar "en buffer" (ver enterArmed) y no pueden compartir
@@ -448,14 +486,18 @@ object LivestreamService {
      * creyendo que le oyen. Si Agora no confirma la captura en 3 s, se cierra y se
      * avisa.
      */
-    private fun vigilarCaptura() {
+    private fun vigilarCaptura(alConfirmar: (() -> Unit)? = null) {
         capturaConfirmada = false
         pttWatchdog.execute {
             val deadline = System.currentTimeMillis() + 3_000
             while (!capturaConfirmada && System.currentTimeMillis() < deadline) {
                 Thread.sleep(100)
             }
-            if (capturaConfirmada || !_micEnabled) return@execute
+            if (!_micEnabled) return@execute
+            if (capturaConfirmada) {
+                alConfirmar?.invoke()
+                return@execute
+            }
             val motivo = "El micrófono no está capturando — el PTT no transmite"
             Log.e(TAG, "PTT sin captura tras 3 s: se cierra")
             lastPttError = motivo
@@ -546,25 +588,55 @@ object LivestreamService {
         Log.e(TAG, "El anillo NO recuperó el micrófono tras el PTT — unidad sin pre-roll")
     }
 
+    /**
+     * Doble F2 en SOS: calla o reabre lo que llega del canal, solo en el altavoz de
+     * la unidad. Devuelve el estado nuevo; fuera del SOS no hace nada.
+     */
+    fun conmutarEntrante(): Boolean {
+        val eng = engine
+        if (!sosPedido || eng == null) return entranteSilenciado
+        val silenciar = !entranteSilenciado
+        eng.adjustPlaybackSignalVolume(if (silenciar) 0 else 100)
+        entranteSilenciado = silenciar
+        if (silenciar) PttTones.silenciarEntrante() else PttTones.abrirEntrante()
+        Log.d(TAG, "Lo que entra del canal: ${if (silenciar) "silenciado" else "sonando"}")
+        return silenciar
+    }
+
     /** Termina el SOS y vuelve a escuchar, sin salir del canal. */
     fun stop() {
         sosPedido = false
-        // Cerrar la emisión cierra también el micro del PTT: si estaba abierto,
-        // el agente tiene que oír que ha dejado de transmitir.
+        // El micro vuelve a como estaba el PTT antes del SOS: si el agente ya
+        // hablaba por radio, sigue abierto; el del SOS se cierra, y el agente tiene
+        // que oír que ha dejado de transmitir.
         val micAbierto = _micEnabled
-        _micEnabled = false
+        val sigueElPtt = micAbierto && micAntesDelSos
+        micAntesDelSos = false
+        _micEnabled = sigueElPtt
         isStreaming = false
         pttResumeService = false
         engine?.let { eng ->
             try {
-                eng.enableLocalAudio(false)
+                if (entranteSilenciado) eng.adjustPlaybackSignalVolume(100)
+                if (!sigueElPtt) eng.enableLocalAudio(false)
                 aplicarPublicacion(eng)
                 eng.disableVideo()
             } catch (e: Exception) {
                 Log.e(TAG, "stop: ${e.message}")
             }
         }
-        if (micAbierto) PttTones.cerrar()
+        if (micAbierto && !sigueElPtt) PttTones.cerrar()
+        // Al terminar el SOS lo de fuera vuelve a sonar solo; el tono lo dice.
+        if (entranteSilenciado) {
+            entranteSilenciado = false
+            PttTones.abrirEntrante()
+        }
+        if (sigueElPtt) {
+            // El PTT sigue con el micro: el anillo se rearma cuando lo suelte,
+            // no ahora, o le quitaría el micro (ver yieldMicForPtt).
+            pttResumeService = resumeServiceAfter
+            resumeServiceAfter = false
+        }
         SosNotifier.fin()
         LedSignals.refresh()
         ModoNoche.sincronizarIr()

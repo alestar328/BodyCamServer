@@ -17,6 +17,7 @@ import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
 import java.util.Base64
+import javax.security.auth.x500.X500Principal
 
 private const val TAG = "BodycamIdentity"
 
@@ -126,9 +127,18 @@ object BodycamIdentity {
         return "BWC-" + "%02X%02X".format(resumen[0], resumen[1])
     }
 
-    /** El certificado del Keystore ya no es el autofirmado: lo emitio una CA. */
-    private fun tieneCertificadoEmitido(): Boolean =
-        certificado()?.let { it.issuerX500Principal != it.subjectX500Principal } ?: false
+    /**
+     * El certificado del Keystore lo emitio una CA de verdad: ni es el autofirmado
+     * ni viene de la CA de pruebas (`OU=Test`, la de tools/alta-bodycam.sh del
+     * movil). Un certificado de pruebas no deja credencial en el backend, asi que
+     * no hay nada que proteger: la W1 del 7-sep lo tenia y se quedaba sin migrar.
+     */
+    private fun tieneCertificadoEmitido(): Boolean {
+        val cert = certificado() ?: return false
+        if (cert.issuerX500Principal == cert.subjectX500Principal) return false
+        val emisor = cert.issuerX500Principal.getName(X500Principal.RFC2253)
+        return emisor.split(',').none { it.trim().equals("OU=Test", ignoreCase = true) }
+    }
 
     /**
      * Numero con el que la unidad entra en el canal de Agora, sacado de su

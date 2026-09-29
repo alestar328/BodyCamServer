@@ -80,6 +80,24 @@ object PttTones {
      */
     fun pisando() = reproducir(listOf(1760 to 60, 0 to 40, 1760 to 60, 0 to 40, 1760 to 60))
 
+    /**
+     * La unidad acaba de entrar en SOS. Gemelo del tono del móvil: mismas notas y
+     * duraciones. La amplitud la decide el agente ([TonoSos]) porque un pitido
+     * puede delatarle; aquí solo se reproduce.
+     */
+    fun sosActivado(amplitud: Double): Long {
+        val tramos = listOf(988 to 90, 0 to 40, 988 to 90, 0 to 40, 1480 to 160)
+        reproducir(tramos, amplitud)
+        // Lo que tarda en sonar entero, para que el micro del SOS se abra después.
+        return tramos.sumOf { it.second }.toLong() + 80
+    }
+
+    /** Doble F2 en SOS: dejan de sonar los demás (bajada, como quien cierra). */
+    fun silenciarEntrante() = reproducir(listOf(660 to 60, 0 to 40, 440 to 180))
+
+    /** Vuelven a sonar los demás. Gemelo invertido de [silenciarEntrante]. */
+    fun abrirEntrante() = reproducir(listOf(440 to 60, 0 to 40, 660 to 180))
+
     /** tramos = pares (frecuencia en Hz, duración en ms). Frecuencia 0 = silencio. */
     private fun reproducir(tramos: List<Pair<Int, Int>>, amplitud: Double = AMPLITUD) {
         altavoz.execute {

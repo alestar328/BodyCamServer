@@ -25,6 +25,34 @@ android {
         targetSdk = 28
         versionCode = 5
         versionName = "1.4"
+
+        // Version piloto sin identidad (2026-09-29): para el manager, que prueba en
+        // otro pais sin ordenador y no puede dar de alta la unidad (el alta hoy
+        // solo va por adb). Con true la unidad sigue aceptando comandos en claro de
+        // un telefono sin alta aunque algun dia se exija el canal cifrado. Se pide
+        // en local.properties (PILOTO_SIN_IDENTIDAD=true), nunca por defecto.
+        buildConfigField(
+            "boolean", "PILOTO_SIN_IDENTIDAD",
+            (localProperties.getProperty("PILOTO_SIN_IDENTIDAD") ?: "false").toBoolean().toString(),
+        )
+
+        // Solo ARM: x86/x86_64 son de emulador y eran ~90 MB del APK de 217 MB que
+        // el manager tenia que pasar a la unidad por Bluetooth.
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Extensiones de Agora que la app no activa nunca (IA de ruido/eco,
+            // segmentacion, caras, audio espacial, AV1...). Agora documenta que se
+            // pueden quitar; si algun dia se usa una, sacarla de esta lista.
+            excludes += "**/libagora_*_extension.so"
+            // Las .so van comprimidas dentro del APK: mas lento de instalar,
+            // mucho menos que transferir.
+            useLegacyPackaging = true
+        }
     }
 
     compileOptions {

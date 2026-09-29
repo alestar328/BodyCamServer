@@ -24,14 +24,26 @@ están en `SEGUIMIENTO.md` y el detalle técnico, en los mensajes de commit.
   - Seriales genéricos (`unknown`, `0123456789ABCDEF`, todo el mismo carácter) o sin
     permiso: se sigue con el id guardado, o uno aleatorio si no hay ninguno.
   - Un id guardado solo se cambia por el del serial si **no hay certificado emitido**
-    (emisor ≠ sujeto en el Keystore). Tras el alta, el id no se mueve.
+    (emisor ≠ sujeto y emisor sin `OU=Test`). Tras el alta en el IAM, el id no se mueve.
+    La W1 tenía un certificado de la CA de pruebas del 7-sep y la primera versión
+    la dejaba en BWC-896E: por eso se excluye `OU=Test`.
 - **`READ_PHONE_STATE`** en el manifiesto (solo para el serial). El device owner se lo
   concede solo en `aplicarPoliticas`; sin kiosco lo concede el guion.
 - **`tools/alta-bodycam-iam.sh`**: concede el permiso y reinicia la app antes del CSR,
   y **para el alta si el BWC ya lo tiene otra unidad** de la tanda o del registro.
 - El formato `BWC-XXXX` y la regla del uid no cambian: el móvil no tiene que tocar nada.
-- Compila (`compileDebugKotlin`). **Sin probar en la W1**: no había ninguna conectada.
-  Comprobar en la unidad que `Build.getSerial()` devuelve lo mismo que el serial de adb.
+- **VERIFICADO EN LA W1:** `Build.getSerial()` = serial de adb, y el log dice
+  `Identidad BWC-896E sustituida por la del serial: BWC-7D6F`.
+
+### Alta de la W1 contra el IAM: HECHA (opción B)
+
+- `tools/alta-bodycam-iam.sh 30393016471440` con el backend local (`runserver 0.0.0.0:8000`,
+  sin `IAM_ENROLLMENT_TOKEN`): `✔ BWC-7D6F dada de alta; certificado hasta 2027-09-28`.
+- En la unidad: `Certificado instalado para CN=BWC-7D6F, OU=QPD`, emitido por `AeriaOne
+  Device Identity CA`, `Prueba de posesion: true`. El ancla `ca.pem` tiene la huella
+  `AC:29:0D:…:A5:00`, la misma que dio la sesión AN; `user-ca.pem` es `AeriaOne User Identity CA`.
+- **La W1 no tiene red** (`Active default network: none`): se queda intentando entrar en
+  Agora y no podrá subir. Hace falta Wi-Fi antes de BC-1 (SOS, PTT y wf 40).
 
 ### Contestar al SOS: voz por PTT en el directo (decidido por el usuario)
 
@@ -46,6 +58,67 @@ pueden contestarle. **Es posible y casi todo existe ya:**
 Encargado a la sesión AN (botón PTT de mantener en el directo, quién habla, audio en el
 emisor). **Tarea BC:** probar en la W1 que durante su SOS, con micro abierto y altavoz,
 la voz entrante no se acople.
+
+### Versión piloto sin identidad (para el manager)
+
+El manager prueba en otro país, **sin ordenador**, con APK de release y sin alta: no
+conecta porque el alta de la bodycam solo va por adb (órdenes `bwc_*`, solo en debug) y el
+teléfono necesita `upload.conf` puesto por adb. Encender el backend no lo arregla.
+
+Lo que se encontró al mirarlo: **con los dos aparatos sin alta, el enlace ya funciona en
+el modo transición.** El teléfono sin certificado no empareja, marca `NO_SOPORTADO` y
+manda los comandos en claro. La W1 los acepta porque `EXIGIR_CANAL_CIFRADO = false`.
+- Qué funciona así: grabar, SOS, PTT y mando.
+- Qué no: atadura con nombre, token prestado ni subida.
+- En el teléfono la release ya lleva `SIMULADOR_CONFIANZA_EN_RELEASE=true` en
+  `local.properties`: el manager entra eligiendo el estado en el selector del borde
+  izquierdo, sin alta ni PIN.
+
+Hecho:
+- **Bodycam:** flag `PILOTO_SIN_IDENTIDAD` (de `local.properties`, por defecto `false`).
+  `EXIGIR_CANAL_CIFRADO` queda como `EXIGIR_CANAL_CIFRADO_FUERA_DEL_PILOTO && !PILOTO`,
+  para que endurecer el canal más adelante no rompa las unidades del manager.
+- **Teléfono:** no se toca, porque ya lo cubre el simulador en release.
+- **Compila** (lo compiló el usuario; a la sesión le bloquearon ese paso por permisos).
+  **Sin probar:** no hay teléfono sin alta con el que probarlo, porque el Samsung está
+  dado de alta. La sesión AN confirmó en el código que su vigilante de caducidad no
+  bloquea a un teléfono sin certificados.
+
+Para generar las APK del piloto:
+- Bodycam: `PILOTO_SIN_IDENTIDAD=true` en `local.properties` y `assembleRelease`.
+- Móvil: `assembleRelease` con `SIMULADOR_CONFIANZA_EN_RELEASE=true`, que ya está puesto.
+- Hay que desinstalar las anteriores solo si la firma no coincide.
+
+Instrucciones para el manager:
+1. **Reiniciar la bodycam justo antes de buscarla:** solo es visible 5 min al arrancar
+   (14-sep). Es la causa más probable de "no conecta".
+2. En la bodycam, aceptar los permisos que pida en su pantalla la primera vez.
+3. En el móvil, elegir el estado activo en el selector de confianza, buscar la bodycam
+   y conectar. Saldrá como enlace sin autenticar, y es lo esperado.
+
+### Mañana: alta de la bodycam a través del móvil (sin adb). Qué hace falta para empezar
+
+1. **Backend accesible desde internet, separado del de desarrollo.**
+   - Con HTTPS, su propia base de datos y sus propias CA, e `IAM_ENROLLMENT_TOKEN` puesto.
+   - Opciones: el `deployment/` del backend en un servidor (lo decide quien lleve el
+     backend), o, provisional, una segunda instancia en este PC detrás de un túnel.
+   - **Decisión del usuario:** cuál de las dos, y el dominio.
+2. **Cómo recibe el móvil la dirección del backend sin adb:** campo en la pantalla de
+   alta, o dirección incluida en la versión piloto. Decisión del usuario; la propuesta es
+   incluida en el piloto, con campo como respaldo.
+3. **Protocolo nuevo por Bluetooth**, lo hace una sola sesión en los dos repos:
+   - `PROV_CSR`: la unidad sin alta manda su CSR.
+   - El móvil, con sesión y PIN, lo lleva a `iam/devices/enroll`.
+   - `PROV_CERT`: el móvil devuelve el certificado y las dos anclas.
+   - La unidad comprueba que la clave es suya, como hoy en `bwc_cert`.
+   - Añadir el punto al agente de coherencia.
+4. **Quién puede dar de alta una unidad:** propuesta, cualquier agente con sesión abierta;
+   el backend puede restringirlo por alcance. **Pregunta para el backend:** si
+   `iam/devices/enroll` acepta el token de sesión del agente en lugar del secreto de alta.
+5. **Riesgo que hay que aceptar:** en el paso de alta el enlace Bluetooth aún no está
+   autenticado (la unidad todavía no tiene certificado). Lo mitigan la proximidad física
+   y que decide el backend.
+6. Estimación: 1,5-2 días, más el backend publicado.
 
 ---
 

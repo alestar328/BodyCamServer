@@ -20,15 +20,13 @@ private const val TAG = "FalconNoche"
  * la cámara parada no hay imagen que mejorar, y medir por medir gasta batería; una
  * unidad metida en un cajón a oscuras no tiene nada que iluminar.
  *
- * Los **LEDs** solo se encienden grabando o emitiendo ([irHaceFalta]). Atados al
- * anillo armado se quedaban puestos para siempre: parar una grabación vuelve a
- * ARMED, no a IDLE, y abrir la app arma el anillo para todo el servicio, así que a
- * oscuras las linternas no se apagaban nunca (corregido el 2026-09-20).
- *
- * El filtro IR-CUT sí sigue al modo noche entero, armado incluido: quitarlo y
- * ponerlo mueve un motor, y hacerlo en cada arranque y parada de grabación sería un
- * clic-clac constante. El precio es que el pre-roll nocturno se graba sin LEDs, solo
- * con el sensor a pelo; desde el disparo, el incidente ya va iluminado.
+ * Los **LEDs** se encienden con la cámara en uso, **anillo armado incluido**
+ * ([irHaceFalta]), igual que el filtro IR-CUT. Del 2026-09-20 al 2026-09-29 solo se
+ * encendían grabando o emitiendo, para que no se quedaran puestos siempre (parar una
+ * grabación vuelve a ARMED, y abrir la app arma el anillo). Lo pidió el cliente al
+ * revés: si el agente entra en una zona oscura, los segundos de pre-roll anteriores
+ * al disparo tienen que verse, y sin LEDs no se veía nada. El precio es la batería:
+ * a oscuras y con el anillo armado, los LEDs no se apagan.
  *
  * ── Histéresis ────────────────────────────────────────────────────────────────
  *
@@ -50,8 +48,9 @@ private const val TAG = "FalconNoche"
  * unidad clavada en noche al volver a la luz: de día en blanco y negro se sigue
  * viendo, pero con los IR gastando batería sin necesidad.
  *
- * Con los LEDs apagados (anillo armado sin grabar) la lectura ya sale limpia: ni
- * parpadeo que disimular ni intervalo largo que guardar.
+ * Desde que los LEDs también alumbran el anillo armado, ese parpadeo cae también en
+ * el pre-roll nocturno. De día los LEDs están apagados y la lectura sale limpia: ni
+ * parpadeo ni intervalo largo.
  *
  * Los umbrales de lux son de partida. Cada cambio deja en logcat los lux que lo
  * provocaron (`adb logcat -s FalconNoche`) para ajustarlos con la unidad delante.
@@ -64,13 +63,16 @@ object ModoNoche {
     /** Por encima de esto, día. Muy por encima de [LUX_ENTRAR] a propósito. */
     private const val LUX_SALIR = 40
 
-    /** Lecturas seguidas por debajo de [LUX_ENTRAR] para pasar a noche: ~9 s. */
+    /** Lecturas seguidas por debajo de [LUX_ENTRAR] para pasar a noche: ~4,5 s. */
     private const val LECTURAS_PARA_ENTRAR = 3
 
     /** Medidas limpias seguidas por encima de [LUX_SALIR] para volver a día: 20-40 s. */
     private const val MEDIDAS_PARA_SALIR = 2
 
-    private const val INTERVALO_MILLIS = 3_000L
+    // 1,5 s desde el 2026-09-30 (antes 3 s): el paso a noche tardaba el doble y el
+    // pre-roll de una zona oscura salía negro esos segundos. El sensor promedia ~0,7 s,
+    // así que las lecturas siguen siendo independientes; leerlo cuesta ~29 ms.
+    private const val INTERVALO_MILLIS = 1_500L
 
     /** Con los LEDs encendidos se mide menos a menudo: cada medida los apaga. */
     private const val INTERVALO_NOCHE_MILLIS = 20_000L
@@ -166,9 +168,11 @@ object ModoNoche {
     private fun camaraEnUso(): Boolean =
         RecordingActivity.isHoldingCamera || LivestreamService.isStreaming
 
-    /** Hay imagen que iluminar: la que va a evidencia o al teléfono. */
-    private fun irHaceFalta(): Boolean =
-        esDeNoche && (RecordingActivity.isRecording || LivestreamService.isStreaming)
+    /**
+     * Hay imagen que iluminar: la que va a evidencia, al pre-roll que puede acabar
+     * siéndolo, o al teléfono.
+     */
+    private fun irHaceFalta(): Boolean = esDeNoche && camaraEnUso()
 
     private fun revisar() {
         if (!camaraEnUso()) {

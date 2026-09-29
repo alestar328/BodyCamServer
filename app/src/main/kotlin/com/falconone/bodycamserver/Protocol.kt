@@ -20,6 +20,7 @@ object Cmd {
     const val PREVIEW_STOP  = "PREVIEW_STOP"
     const val SERVICE_START = "SERVICE_START" // arma la grabación continua (anillo pre-evento)
     const val SERVICE_STOP  = "SERVICE_STOP"  // desarma y descarta el anillo
+    const val SOS_TONE      = "SOS_TONE"      // SOS_TONE:OFF|LOW|HIGH — volumen del pitido al entrar en SOS
 
     // ── Subida de evidencia ───────────────────────────────────────────────────
     // La reanudación no se rinde nunca (ver UploadCancel): estos tres son la

@@ -31,12 +31,19 @@ import java.io.InputStreamReader
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 private val FALCON_UUID: UUID = UUID.fromString("FA1C0000-1337-4242-CAFE-DEADBEEF0001")
 private const val SERVICE_NAME = "FalconOneServer"
 private const val TAG = "FalconServer"
 private const val NOTIF_CHANNEL = "falcon_bt_server"
 private const val NOTIF_ID = 1
+
+/** Ventana del doble F2 en SOS, y lo que tarda la suelta en aplicarse. */
+private const val DOBLE_F2_MS = 600L
+/** Por debajo de esto, dos avisos de F2 son rebote del contacto, no dos pulsaciones. */
+private const val REBOTE_F2_MS = 80L
 
 /**
  * Modo transicion del workflow 31, decidido por el usuario el 2026-09-28.
@@ -48,8 +55,14 @@ private const val NOTIF_ID = 1
  * manejar la camara.
  *
  * `true` cuando se alineen las anclas: sin canal cifrado solo se atiende AUTH_*.
+ *
+ * La version piloto sin identidad (`BuildConfig.PILOTO_SIN_IDENTIDAD`, 2026-09-29)
+ * no lo exige nunca: sus telefonos no tienen alta y no pueden cifrar. Asi, poner
+ * esto a `true` no rompe las unidades que el manager prueba a distancia.
  */
-private const val EXIGIR_CANAL_CIFRADO = false
+private const val EXIGIR_CANAL_CIFRADO_FUERA_DEL_PILOTO = false
+private val EXIGIR_CANAL_CIFRADO =
+    EXIGIR_CANAL_CIFRADO_FUERA_DEL_PILOTO && !BuildConfig.PILOTO_SIN_IDENTIDAD
 
 class BtServerService : Service() {
 
@@ -134,6 +147,73 @@ class BtServerService : Service() {
         }
     }
 
+    // ── F2 durante el SOS: suelta o doble (decidido el 2026-09-29) ─────────────
+    //
+    // El firmware solo avisa al SOLTAR F2, así que la pulsación larga no se puede
+    // medir (y a 1 s inyecta BACK). En SOS el gesto es el doble:
+    //   • doble (dos sueltas en < DOBLE_F2_MS) → calla/reabre lo que entra del canal
+    //   • suelta → conmuta el micro, como siempre, pero al vencer la ventana: si se
+    //     aplicara al instante, la primera del doble abriría o cerraría el micro.
+    // Fuera del SOS, F2 sigue inmediato con el antirrebote común de 300 ms.
+
+    private val esperaF2 = Executors.newSingleThreadScheduledExecutor()
+    private var f2Pendiente: ScheduledFuture<*>? = null
+    private var ultimaF2Ms = 0L
+
+    @Synchronized
+    private fun f2DuranteSos() {
+        val ahora = System.currentTimeMillis()
+        val desde = ahora - ultimaF2Ms
+        // Rebote del contacto, no una segunda pulsación de verdad.
+        if (desde < REBOTE_F2_MS) return
+        ultimaF2Ms = ahora
+
+        val pendiente = f2Pendiente
+        if (pendiente != null && desde < DOBLE_F2_MS && pendiente.cancel(false)) {
+            f2Pendiente = null
+            ultimaF2Ms = 0L  // una tercera pulsación empieza gesto nuevo
+            Log.d(TAG, "SideKey F2 doble en SOS ($desde ms) → silencio de lo entrante")
+            executor.execute { LivestreamService.conmutarEntrante() }
+            return
+        }
+        f2Pendiente = esperaF2.schedule({
+            synchronized(this) { f2Pendiente = null }
+            // El SOS pudo acabar dentro de la ventana: fuera de él la suelta abriría
+            // el PTT por una pulsación que el agente dio para otra cosa.
+            if (LivestreamService.sosActivo) {
+                Log.d(TAG, "SideKey F2 suelta en SOS → micro")
+                executor.execute(::accionPtt)
+            } else {
+                Log.d(TAG, "SideKey F2 descartado: el SOS acabó dentro de la ventana")
+            }
+        }, DOBLE_F2_MS, TimeUnit.MILLISECONDS)
+    }
+
+    /** F2 suelto: conmuta el micro (PTT fuera del SOS, micro del directo dentro). */
+    private fun accionPtt() {
+        // Abrir el micro sin red daría un PTT_ON que no transmite nada:
+        // Agora crearía el engine y fallaría al entrar en el canal por
+        // dentro. Cerrarlo sí se permite siempre, para poder callar.
+        if (!cachedWifiOk && !LivestreamService.isMicEnabled) {
+            Log.d(TAG, "SideKey F2 → PTT descartado: sin conexión")
+            // Sin sonido el agente cree que ha abierto el micro y habla
+            // solo: el zumbido es lo único que se lo dice ahí fuera.
+            PttTones.denegado()
+            send(Rsp.error("Sin WiFi — el PTT viaja por el canal de Agora"))
+        } else {
+            val on = LivestreamService.togglePtt(applicationContext)
+            Log.d(TAG, "SideKey F2 → PTT mic ${if (on) "ON" else "OFF"}")
+            val fallo = LivestreamService.lastPttError
+            when {
+                on -> send(Ntf.PTT_ON)
+                // Cerrar es un OFF normal; no abrir es un error que el
+                // agente tiene que ver, no un PTT que se apaga solo.
+                fallo != null -> { send(Rsp.error(fallo)); send(Ntf.PTT_OFF) }
+                else -> send(Ntf.PTT_OFF)
+            }
+        }
+    }
+
     // Physical button mapping — VERIFIED via logcat (FalconSmoke / SIDE_KEY_INTENT)
     // on 2026-06-03 (confirmed THREE times). Each physical button emits:
     //   • 132 / KEYCODE_F2 = "PTT / audio" button → conmuta el micro en Agora     → BTN_PTT_ON/OFF
@@ -159,35 +239,21 @@ class BtServerService : Service() {
             val status  = intent.getIntExtra("key_status", -1)
             Log.d(TAG, "SideKey key_code=$keyCode key_status=$status")
             if (status == 1) return  // ignore release; accept 0 (press) and -1 (W1 firmware)
+
+            // Durante el SOS, F2 tiene dos gestos y no pasa por el antirrebote común:
+            // sus 300 ms se comerían la segunda pulsación de un doble F2. F2 solo
+            // entra por aquí (ver arriba), así que no hay otra puerta que filtrar.
+            if (keyCode == KeyEvent.KEYCODE_F2 && LivestreamService.sosActivo) {
+                f2DuranteSos()
+                return
+            }
             if (!ButtonDebounce.tryAcquire()) return  // onKeyDown already handled this press
 
             // Run on executor so RtcEngine.create/destroy don't block the main thread.
             // This keeps sideKeyReceiver fast (<5ms) so onKeyDown arrives while debounce
             // is still active (within 300ms) and gets correctly discarded.
             when (keyCode) {
-                KeyEvent.KEYCODE_F2 -> executor.execute {
-                    // Abrir el micro sin red daría un PTT_ON que no transmite nada:
-                    // Agora crearía el engine y fallaría al entrar en el canal por
-                    // dentro. Cerrarlo sí se permite siempre, para poder callar.
-                    if (!cachedWifiOk && !LivestreamService.isMicEnabled) {
-                        Log.d(TAG, "SideKey F2 → PTT descartado: sin conexión")
-                        // Sin sonido el agente cree que ha abierto el micro y habla
-                        // solo: el zumbido es lo único que se lo dice ahí fuera.
-                        PttTones.denegado()
-                        send(Rsp.error("Sin WiFi — el PTT viaja por el canal de Agora"))
-                    } else {
-                        val on = LivestreamService.togglePtt(applicationContext)
-                        Log.d(TAG, "SideKey F2 → PTT mic ${if (on) "ON" else "OFF"}")
-                        val fallo = LivestreamService.lastPttError
-                        when {
-                            on -> send(Ntf.PTT_ON)
-                            // Cerrar es un OFF normal; no abrir es un error que el
-                            // agente tiene que ver, no un PTT que se apaga solo.
-                            fallo != null -> { send(Rsp.error(fallo)); send(Ntf.PTT_OFF) }
-                            else -> send(Ntf.PTT_OFF)
-                        }
-                    }
-                }
+                KeyEvent.KEYCODE_F2 -> executor.execute(::accionPtt)
                 KeyEvent.KEYCODE_F3 -> executor.execute {
                     if (LivestreamService.sosActivo) {
                         Log.d(TAG, "SideKey F3 → STREAM STOP")
@@ -296,6 +362,8 @@ class BtServerService : Service() {
             send(Rsp.error(motivo))
             send(Ntf.PTT_OFF)
         }
+        // El micro del SOS no lo abre una pulsación, así que nadie más manda el ON.
+        LivestreamService.onMicDelSosAbierto = { send(Ntf.PTT_ON) }
         registerReceiver(apagadoReceiver, ApagadoReceiver.filtro())
         registerReceiver(sideKeyReceiver, IntentFilter("android.intent.action.SIDE_KEY_INTENT"))
         registerReceiver(smokeKeyReceiver, IntentFilter().apply { smokeKeyActions.forEach { addAction(it) } })
@@ -426,6 +494,11 @@ class BtServerService : Service() {
             // camara no esta al servicio de nadie.
             binding = null
             AgenteDeServicio.soltar()
+            // El token tampoco: la unidad rota entre agentes, y hasta caducar subiría
+            // lo del siguiente con la sesión del anterior (el backend lo agruparía
+            // bajo el teléfono que lo prestó). Lo pendiente espera al próximo token;
+            // el teléfono lo vuelve a prestar al reconectar.
+            UploadConfig.retirarToken()
             closeClient()
             // Sin teléfono nadie mira el visor: se libera la cámara para no
             // drenar batería. Si el enlace vuelve, el teléfono lo reabre.
@@ -577,6 +650,12 @@ class BtServerService : Service() {
             Cmd.STREAM_STOP -> {
                 LivestreamService.stop()
                 Rsp.ok(Cmd.STREAM_STOP)
+            }
+
+            Cmd.SOS_TONE -> {
+                val nivel = TonoSos.fijar(this, parts.getOrNull(1).orEmpty())
+                if (nivel != null) Rsp.ok("${Cmd.SOS_TONE}:${nivel.name}")
+                else Rsp.error("Valor de tono no válido: SOS_TONE:OFF|LOW|HIGH")
             }
 
             Cmd.IR_ON  -> { HardwareController.irOn();  Rsp.ok(Cmd.IR_ON)  }
